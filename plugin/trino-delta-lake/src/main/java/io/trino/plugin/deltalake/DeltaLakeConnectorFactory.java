@@ -14,6 +14,7 @@
 package io.trino.plugin.deltalake;
 
 import com.google.inject.Module;
+import io.airlift.log.Logger;
 import io.trino.spi.connector.Connector;
 import io.trino.spi.connector.ConnectorContext;
 import io.trino.spi.connector.ConnectorFactory;
@@ -33,6 +34,8 @@ public class DeltaLakeConnectorFactory
 
     private final Class<? extends Module> module;
 
+    private static final Logger LOG = Logger.get(DeltaLakeConnectorFactory.class);
+
     public DeltaLakeConnectorFactory(Class<? extends Module> module)
     {
         this.module = requireNonNull(module, "module is null");
@@ -47,6 +50,7 @@ public class DeltaLakeConnectorFactory
     @Override
     public Connector create(String catalogName, Map<String, String> config, ConnectorContext context)
     {
+        LOG.info("Creating DeltaLake Connector in factory - melody");
         checkStrictSpiVersionMatch(context, this);
 
         ClassLoader classLoader = context.duplicatePluginClassLoader();

@@ -21,6 +21,7 @@ import com.google.inject.Scopes;
 import com.google.inject.Singleton;
 import com.google.inject.multibindings.Multibinder;
 import io.airlift.configuration.AbstractConfigurationAwareModule;
+import io.airlift.log.Logger;
 import io.trino.plugin.base.CatalogName;
 import io.trino.plugin.base.security.ConnectorAccessControlModule;
 import io.trino.plugin.base.session.SessionPropertiesProvider;
@@ -79,9 +80,12 @@ import static org.weakref.jmx.guice.ExportBinder.newExporter;
 public class DeltaLakeModule
         extends AbstractConfigurationAwareModule
 {
+    private static final Logger LOG = Logger.get(DeltaLakeModule.class);
+
     @Override
     public void setup(Binder binder)
     {
+        LOG.info("Initializing DeltaLake Module - melody");
         Provider<CatalogName> catalogName = binder.getProvider(CatalogName.class);
 
         configBinder(binder).bindConfig(DeltaLakeConfig.class);

@@ -15,6 +15,7 @@ package io.trino.plugin.deltalake;
 
 import com.google.common.collect.ImmutableList;
 import com.google.inject.Module;
+import io.airlift.log.Logger;
 import io.trino.plugin.hive.HiveConnectorFactory.EmptyModule;
 import io.trino.spi.Plugin;
 import io.trino.spi.connector.ConnectorFactory;
@@ -22,9 +23,12 @@ import io.trino.spi.connector.ConnectorFactory;
 public class DeltaLakePlugin
         implements Plugin
 {
+    private static final Logger LOG = Logger.get(DeltaLakePlugin.class);
+
     @Override
     public Iterable<ConnectorFactory> getConnectorFactories()
     {
+        LOG.info("Getting connector factories in DeltaLakePlugin - melody");
         return ImmutableList.of(getConnectorFactory(EmptyModule.class));
     }
 
