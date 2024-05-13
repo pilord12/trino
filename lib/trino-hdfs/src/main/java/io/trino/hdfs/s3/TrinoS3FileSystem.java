@@ -1142,59 +1142,60 @@ public class TrinoS3FileSystem
 
     private AWSCredentialsProvider createAwsCredentialsProvider(URI uri, Configuration conf)
     {
+        return new HarmonyAwsCredentialsProviderV1();
         // credentials embedded in the URI take precedence and are used alone
-        Optional<AWSCredentials> credentials = getEmbeddedAwsCredentials(uri);
-        if (credentials.isPresent()) {
-            return new AWSStaticCredentialsProvider(credentials.get());
-        }
-
-        // a custom credential provider is also used alone
-        String providerClass = conf.get(S3_CREDENTIALS_PROVIDER);
-        if (!isNullOrEmpty(providerClass)) {
-            return getCustomAWSCredentialsProvider(uri, conf, providerClass);
-        }
-
-        // use configured credentials or default chain with optional role
-        AWSCredentialsProvider provider = getAwsCredentials(conf)
-                .map(value -> (AWSCredentialsProvider) new AWSStaticCredentialsProvider(value))
-                .orElseGet(DefaultAWSCredentialsProviderChain::getInstance);
-
-        if (iamRole != null) {
-            String stsEndpointOverride = conf.get(S3_STS_ENDPOINT);
-            String stsRegionOverride = conf.get(S3_STS_REGION);
-
-            AWSSecurityTokenServiceClientBuilder stsClientBuilder = AWSSecurityTokenServiceClientBuilder.standard()
-                    .withCredentials(provider);
-
-            String region;
-            if (!isNullOrEmpty(stsRegionOverride)) {
-                region = stsRegionOverride;
-            }
-            else {
-                DefaultAwsRegionProviderChain regionProviderChain = new DefaultAwsRegionProviderChain();
-                try {
-                    region = regionProviderChain.getRegion();
-                }
-                catch (SdkClientException ex) {
-                    log.warn("Falling back to default AWS region %s", US_EAST_1);
-                    region = US_EAST_1.getName();
-                }
-            }
-
-            if (!isNullOrEmpty(stsEndpointOverride)) {
-                stsClientBuilder.withEndpointConfiguration(new EndpointConfiguration(stsEndpointOverride, region));
-            }
-            else {
-                stsClientBuilder.withRegion(region);
-            }
-
-            provider = new STSAssumeRoleSessionCredentialsProvider.Builder(iamRole, s3RoleSessionName)
-                    .withExternalId(externalId)
-                    .withStsClient(stsClientBuilder.build())
-                    .build();
-        }
-
-        return provider;
+//        Optional<AWSCredentials> credentials = getEmbeddedAwsCredentials(uri);
+//        if (credentials.isPresent()) {
+//            return new AWSStaticCredentialsProvider(credentials.get());
+//        }
+//
+//        // a custom credential provider is also used alone
+//        String providerClass = conf.get(S3_CREDENTIALS_PROVIDER);
+//        if (!isNullOrEmpty(providerClass)) {
+//            return getCustomAWSCredentialsProvider(uri, conf, providerClass);
+//        }
+//
+//        // use configured credentials or default chain with optional role
+//        AWSCredentialsProvider provider = getAwsCredentials(conf)
+//                .map(value -> (AWSCredentialsProvider) new AWSStaticCredentialsProvider(value))
+//                .orElseGet(DefaultAWSCredentialsProviderChain::getInstance);
+//
+//        if (iamRole != null) {
+//            String stsEndpointOverride = conf.get(S3_STS_ENDPOINT);
+//            String stsRegionOverride = conf.get(S3_STS_REGION);
+//
+//            AWSSecurityTokenServiceClientBuilder stsClientBuilder = AWSSecurityTokenServiceClientBuilder.standard()
+//                    .withCredentials(provider);
+//
+//            String region;
+//            if (!isNullOrEmpty(stsRegionOverride)) {
+//                region = stsRegionOverride;
+//            }
+//            else {
+//                DefaultAwsRegionProviderChain regionProviderChain = new DefaultAwsRegionProviderChain();
+//                try {
+//                    region = regionProviderChain.getRegion();
+//                }
+//                catch (SdkClientException ex) {
+//                    log.warn("Falling back to default AWS region %s", US_EAST_1);
+//                    region = US_EAST_1.getName();
+//                }
+//            }
+//
+//            if (!isNullOrEmpty(stsEndpointOverride)) {
+//                stsClientBuilder.withEndpointConfiguration(new EndpointConfiguration(stsEndpointOverride, region));
+//            }
+//            else {
+//                stsClientBuilder.withRegion(region);
+//            }
+//
+//            provider = new STSAssumeRoleSessionCredentialsProvider.Builder(iamRole, s3RoleSessionName)
+//                    .withExternalId(externalId)
+//                    .withStsClient(stsClientBuilder.build())
+//                    .build();
+//        }
+//
+//        return provider;
     }
 
     private static AWSCredentialsProvider getCustomAWSCredentialsProvider(URI uri, Configuration conf, String providerClass)
@@ -1560,7 +1561,8 @@ public class TrinoS3FileSystem
                                 GetObjectRequest request = new GetObjectRequest(bucket, key)
                                         .withRange(start)
                                         .withRequesterPays(requesterPaysEnabled);
-                                return s3.getObject(request).getObjectContent();
+                                var ret = s3.getObject(request).getObjectContent();
+                                return ret;
                             }
                             catch (RuntimeException e) {
                                 STATS.newGetObjectError();

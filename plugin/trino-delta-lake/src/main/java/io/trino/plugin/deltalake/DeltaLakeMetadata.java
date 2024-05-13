@@ -22,6 +22,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableTable;
 import com.google.common.collect.Sets;
+import hpe.harmony.sdk.java.utils.JwtTokenManager;
 import io.airlift.json.JsonCodec;
 import io.airlift.log.Logger;
 import io.airlift.slice.Slice;
@@ -31,6 +32,8 @@ import io.trino.filesystem.FileIterator;
 import io.trino.filesystem.Location;
 import io.trino.filesystem.TrinoFileSystem;
 import io.trino.filesystem.TrinoFileSystemFactory;
+import io.trino.filesystem.s3.MelodyFileSystemFactory;
+import io.trino.filesystem.s3.S3FileSystemConfig;
 import io.trino.plugin.base.classloader.ClassLoaderSafeSystemTable;
 import io.trino.plugin.base.projection.ApplyProjectionUtil;
 import io.trino.plugin.deltalake.DeltaLakeAnalyzeProperties.AnalyzeMode;
@@ -67,14 +70,11 @@ import io.trino.plugin.deltalake.transactionlog.writer.TransactionLogWriterFacto
 import io.trino.plugin.hive.HiveType;
 import io.trino.plugin.hive.SchemaAlreadyExistsException;
 import io.trino.plugin.hive.TableAlreadyExistsException;
-import io.trino.plugin.hive.TrinoViewHiveMetastore;
 import io.trino.plugin.hive.metastore.Column;
 import io.trino.plugin.hive.metastore.Database;
-import io.trino.plugin.hive.metastore.HivePrincipal;
 import io.trino.plugin.hive.metastore.PrincipalPrivileges;
 import io.trino.plugin.hive.metastore.StorageFormat;
 import io.trino.plugin.hive.metastore.Table;
-import io.trino.plugin.hive.security.AccessControlMetadata;
 import io.trino.spi.NodeManager;
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.Block;
@@ -138,12 +138,20 @@ import io.trino.spi.type.Type;
 import io.trino.spi.type.TypeManager;
 import io.trino.spi.type.VarcharType;
 import jakarta.annotation.Nullable;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClientBuilder;
+import org.apache.http.util.EntityUtils;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.time.Instant;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Deque;
@@ -368,10 +376,8 @@ public class DeltaLakeMetadata
     private final DeltaLakeMetastore metastore;
     private final TransactionLogAccess transactionLogAccess;
     private final DeltaLakeTableStatisticsProvider tableStatisticsProvider;
-    private final TrinoFileSystemFactory fileSystemFactory;
+    private final MelodyFileSystemFactory fileSystemFactory;
     private final TypeManager typeManager;
-    private final AccessControlMetadata accessControlMetadata;
-    private final TrinoViewHiveMetastore trinoViewHiveMetastore;
     private final CheckpointWriterManager checkpointWriterManager;
     private final long defaultCheckpointInterval;
     private final int domainCompactionThreshold;
@@ -389,6 +395,9 @@ public class DeltaLakeMetadata
     private final boolean allowManagedTableRename;
     private final Map<SchemaTableName, Long> queriedVersions = new ConcurrentHashMap<>();
     private final Map<QueriedTable, TableSnapshot> queriedSnapshots = new ConcurrentHashMap<>();
+    private final CloseableHttpClient client = HttpClientBuilder.create().build();
+    private final JwtTokenManager tm;
+
 
     private record QueriedTable(SchemaTableName schemaTableName, long version)
     {
@@ -402,10 +411,8 @@ public class DeltaLakeMetadata
             DeltaLakeMetastore metastore,
             TransactionLogAccess transactionLogAccess,
             DeltaLakeTableStatisticsProvider tableStatisticsProvider,
-            TrinoFileSystemFactory fileSystemFactory,
+            MelodyFileSystemFactory fileSystemFactory,
             TypeManager typeManager,
-            AccessControlMetadata accessControlMetadata,
-            TrinoViewHiveMetastore trinoViewHiveMetastore,
             int domainCompactionThreshold,
             boolean unsafeWritesEnabled,
             JsonCodec<DataFileInfo> dataFileInfoCodec,
@@ -418,15 +425,14 @@ public class DeltaLakeMetadata
             DeltaLakeRedirectionsProvider deltaLakeRedirectionsProvider,
             CachingExtendedStatisticsAccess statisticsAccess,
             boolean useUniqueTableLocation,
-            boolean allowManagedTableRename)
+            boolean allowManagedTableRename,
+            DeltaLakeConfig config)
     {
         this.metastore = requireNonNull(metastore, "metastore is null");
         this.transactionLogAccess = requireNonNull(transactionLogAccess, "transactionLogAccess is null");
         this.tableStatisticsProvider = requireNonNull(tableStatisticsProvider, "tableStatisticsProvider is null");
         this.fileSystemFactory = requireNonNull(fileSystemFactory, "fileSystemFactory is null");
         this.typeManager = requireNonNull(typeManager, "typeManager is null");
-        this.accessControlMetadata = requireNonNull(accessControlMetadata, "accessControlMetadata is null");
-        this.trinoViewHiveMetastore = requireNonNull(trinoViewHiveMetastore, "trinoViewHiveMetastore is null");
         this.domainCompactionThreshold = domainCompactionThreshold;
         this.unsafeWritesEnabled = unsafeWritesEnabled;
         this.dataFileInfoCodec = requireNonNull(dataFileInfoCodec, "dataFileInfoCodec is null");
@@ -441,6 +447,7 @@ public class DeltaLakeMetadata
         this.deleteSchemaLocationsFallback = deleteSchemaLocationsFallback;
         this.useUniqueTableLocation = useUniqueTableLocation;
         this.allowManagedTableRename = allowManagedTableRename;
+        this.tm = new JwtTokenManager(config.getClientId(), config.getClientSecret(), config.getOAuthUrl(), client);
     }
 
     public TableSnapshot getSnapshot(ConnectorSession session, SchemaTableName table, String tableLocation, long atVersion)
@@ -473,12 +480,74 @@ public class DeltaLakeMetadata
         }
     }
 
+    public List<String> getAllTables(String org, String domain)
+    {
+        String jwt = null;
+        try {
+            jwt = tm.requestJwtToken();
+        }
+        catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+        var request = new HttpGet("https://dev.dataplatform.hpedev.net/dev/data-catalog/organizations/" + org + "/domains/" + domain + "/assets");
+
+        request.addHeader("Content-Type", "application/json");
+        request.addHeader("Authorization", "Bearer " + jwt);
+        ArrayList<String> tables = new ArrayList<>();
+
+        try {
+            CloseableHttpResponse response = client.execute(request);
+            LOG.info(response.getStatusLine().toString());
+            LOG.info(response.getStatusLine().getReasonPhrase());
+            JSONArray json = new JSONArray(EntityUtils.toString(response.getEntity()));
+            for (int i = 0; i < json.length(); i++) {
+                JSONObject o = json.getJSONObject(i);
+                if (o.getString("assetType").equals("dataset")) {
+                    tables.add(o.getString("name"));
+                }
+            }
+        }
+        catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+        return tables;
+    }
+
     @Override
     public List<String> listSchemaNames(ConnectorSession session)
     {
-        return metastore.getAllDatabases().stream()
-                .filter(schema -> !schema.equalsIgnoreCase("sys"))
-                .collect(toImmutableList());
+        String jwt = null;
+        try {
+            jwt = tm.requestJwtToken();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+        var request = new HttpGet("https://dev.dataplatform.hpedev.net/dev/data-catalog/global/domains/");
+
+        request.addHeader("Content-Type", "application/json");
+        request.addHeader("Authorization", "Bearer " + jwt);
+        ArrayList<String> schemas = new ArrayList<>();
+
+        try {
+            CloseableHttpResponse response = client.execute(request);
+            LOG.info(response.getStatusLine().toString());
+            LOG.info(response.getStatusLine().getReasonPhrase());
+            JSONArray json = new JSONArray(EntityUtils.toString(response.getEntity()));
+            for (int i = 0; i < json.length(); i++) {
+                JSONObject o = json.getJSONObject(i);
+                String domain = o.getString("name");
+                String org = o.getJSONObject("organization").getString("name");
+                schemas.add(org + "/" + domain);
+            }
+        }
+        catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+        return schemas;
     }
 
     private static boolean isHiveTable(Table table)
@@ -519,12 +588,52 @@ public class DeltaLakeMetadata
     @Override
     public LocatedTableHandle getTableHandle(ConnectorSession session, SchemaTableName tableName)
     {
+        String jwt = null;
+        try {
+            jwt = tm.requestJwtToken();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
         requireNonNull(tableName, "tableName is null");
         if (!DeltaLakeTableName.isDataTable(tableName.getTableName())) {
             // Pretend the table does not exist to produce better error message in case of table redirects to Hive
             return null;
         }
-        Optional<DeltaMetastoreTable> table = metastore.getTable(tableName.getSchemaName(), tableName.getTableName());
+        String[] orgDomain = tableName.getSchemaName().split("/");
+        String org = orgDomain[0];
+        String domain = orgDomain[1];
+
+        var request = new HttpGet("https://dev.dataplatform.hpedev.net/dev/data-catalog/organizations/" + org + "/domains/" + domain + "/assets/" + tableName.getTableName());
+        // TODO call access manager to authorize BI view permissions for specific asset
+        request.addHeader("Content-Type", "application/json");
+        request.addHeader("Authorization", "Bearer " + jwt);
+
+        String loc = "";
+
+        Optional<DeltaMetastoreTable> table = Optional.empty();
+
+        try {
+            CloseableHttpResponse response = client.execute(request);
+            LOG.info(response.getStatusLine().toString());
+            LOG.info(response.getStatusLine().getReasonPhrase());
+            if (response.getStatusLine().getStatusCode() == 200)
+            {
+                JSONObject json = new JSONObject(EntityUtils.toString(response.getEntity()));
+                String bucket = json.getJSONObject("attributes").getJSONObject("location").getJSONObject("S3").getString("bucket");
+                String prefix = json.getJSONObject("attributes").getJSONObject("location").getJSONObject("S3").getString("path");
+                loc = "s3a://" + bucket + "/" + prefix;
+
+                SchemaTableName stm = new SchemaTableName(tableName.getSchemaName(), tableName.getTableName());
+                DeltaMetastoreTable t = new DeltaMetastoreTable(stm, false, loc);
+
+                table = Optional.of(t);
+            }
+        }
+        catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
         if (table.isEmpty()) {
             return null;
         }
@@ -667,12 +776,18 @@ public class DeltaLakeMetadata
     @Override
     public List<SchemaTableName> listTables(ConnectorSession session, Optional<String> schemaName)
     {
-        return schemaName.map(Collections::singletonList)
-                .orElseGet(() -> listSchemaNames(session))
-                .stream()
-                .flatMap(schema -> metastore.getAllTables(schema).stream()
-                        .map(table -> new SchemaTableName(schema, table)))
-                .collect(toImmutableList());
+        List<SchemaTableName> ret;
+        if (schemaName.isPresent()) {
+            String name = schemaName.get();
+            var arr = name.split("/");
+            ret = getAllTables(arr[0], arr[1]).stream().map(
+                    s -> SchemaTableName.schemaTableName(name, s)
+            ).toList();
+        }
+        else {
+            ret = new ArrayList<>();
+        }
+        return ret;
     }
 
     @Override
@@ -1446,13 +1561,13 @@ public class DeltaLakeMetadata
     @Override
     public void setViewComment(ConnectorSession session, SchemaTableName viewName, Optional<String> comment)
     {
-        trinoViewHiveMetastore.updateViewComment(session, viewName, comment);
+        throw new UnsupportedOperationException("Views are not supported");
     }
 
     @Override
     public void setViewColumnComment(ConnectorSession session, SchemaTableName viewName, String columnName, Optional<String> comment)
     {
-        trinoViewHiveMetastore.updateViewColumnComment(session, viewName, columnName, comment);
+        throw new UnsupportedOperationException("Views are not supported");
     }
 
     @Override
@@ -2553,97 +2668,100 @@ public class DeltaLakeMetadata
     @Override
     public void createView(ConnectorSession session, SchemaTableName viewName, ConnectorViewDefinition definition, boolean replace)
     {
-        trinoViewHiveMetastore.createView(session, viewName, definition, replace);
+        throw new UnsupportedOperationException("Views are not supported");
     }
 
     @Override
     public void dropView(ConnectorSession session, SchemaTableName viewName)
     {
-        trinoViewHiveMetastore.dropView(viewName);
+        throw new UnsupportedOperationException("Views are not supported");
     }
 
     @Override
     public List<SchemaTableName> listViews(ConnectorSession session, Optional<String> schemaName)
     {
-        return trinoViewHiveMetastore.listViews(schemaName);
+//        throw new UnsupportedOperationException("Views are not supported");
+        return new ArrayList<>();
     }
 
     @Override
     public Map<SchemaTableName, ConnectorViewDefinition> getViews(ConnectorSession session, Optional<String> schemaName)
     {
-        return trinoViewHiveMetastore.getViews(schemaName);
+//        throw new UnsupportedOperationException("Views are not supported");
+        return new HashMap<>();
     }
 
     @Override
     public Optional<ConnectorViewDefinition> getView(ConnectorSession session, SchemaTableName viewName)
     {
-        return trinoViewHiveMetastore.getView(viewName);
+//        throw new UnsupportedOperationException("Views are not supported");
+        return Optional.empty();
     }
 
     @Override
     public void createRole(ConnectorSession session, String role, Optional<TrinoPrincipal> grantor)
     {
-        accessControlMetadata.createRole(session, role, grantor.map(HivePrincipal::from));
+        throw new UnsupportedOperationException("Access management is not supported");
     }
 
     @Override
     public void dropRole(ConnectorSession session, String role)
     {
-        accessControlMetadata.dropRole(session, role);
+        throw new UnsupportedOperationException("Access management is not supported");
     }
 
     @Override
     public Set<String> listRoles(ConnectorSession session)
     {
-        return accessControlMetadata.listRoles(session);
+        throw new UnsupportedOperationException("Access management is not supported");
     }
 
     @Override
     public Set<RoleGrant> listRoleGrants(ConnectorSession session, TrinoPrincipal principal)
     {
-        return ImmutableSet.copyOf(accessControlMetadata.listRoleGrants(session, HivePrincipal.from(principal)));
+        throw new UnsupportedOperationException("Access management is not supported");
     }
 
     @Override
     public void grantRoles(ConnectorSession session, Set<String> roles, Set<TrinoPrincipal> grantees, boolean withAdminOption, Optional<TrinoPrincipal> grantor)
     {
-        accessControlMetadata.grantRoles(session, roles, HivePrincipal.from(grantees), withAdminOption, grantor.map(HivePrincipal::from));
+        throw new UnsupportedOperationException("Access management is not supported");
     }
 
     @Override
     public void revokeRoles(ConnectorSession session, Set<String> roles, Set<TrinoPrincipal> grantees, boolean adminOptionFor, Optional<TrinoPrincipal> grantor)
     {
-        accessControlMetadata.revokeRoles(session, roles, HivePrincipal.from(grantees), adminOptionFor, grantor.map(HivePrincipal::from));
+        throw new UnsupportedOperationException("Access management is not supported");
     }
 
     @Override
     public Set<RoleGrant> listApplicableRoles(ConnectorSession session, TrinoPrincipal principal)
     {
-        return accessControlMetadata.listApplicableRoles(session, HivePrincipal.from(principal));
+        throw new UnsupportedOperationException("Access management is not supported");
     }
 
     @Override
     public Set<String> listEnabledRoles(ConnectorSession session)
     {
-        return accessControlMetadata.listEnabledRoles(session);
+        throw new UnsupportedOperationException("Access management is not supported");
     }
 
     @Override
     public void grantTablePrivileges(ConnectorSession session, SchemaTableName schemaTableName, Set<Privilege> privileges, TrinoPrincipal grantee, boolean grantOption)
     {
-        accessControlMetadata.grantTablePrivileges(session, schemaTableName, privileges, HivePrincipal.from(grantee), grantOption);
+        throw new UnsupportedOperationException("Access management is not supported");
     }
 
     @Override
     public void revokeTablePrivileges(ConnectorSession session, SchemaTableName schemaTableName, Set<Privilege> privileges, TrinoPrincipal grantee, boolean grantOption)
     {
-        accessControlMetadata.revokeTablePrivileges(session, schemaTableName, privileges, HivePrincipal.from(grantee), grantOption);
+        throw new UnsupportedOperationException("Access management is not supported");
     }
 
     @Override
     public List<GrantInfo> listTablePrivileges(ConnectorSession session, SchemaTablePrefix schemaTablePrefix)
     {
-        return accessControlMetadata.listTablePrivileges(session, listTables(session, schemaTablePrefix));
+        throw new UnsupportedOperationException("Access management is not supported");
     }
 
     private List<SchemaTableName> listTables(ConnectorSession session, SchemaTablePrefix prefix)

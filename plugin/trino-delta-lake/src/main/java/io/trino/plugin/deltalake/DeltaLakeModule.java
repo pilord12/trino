@@ -21,6 +21,8 @@ import com.google.inject.Scopes;
 import com.google.inject.Singleton;
 import com.google.inject.multibindings.Multibinder;
 import io.airlift.configuration.AbstractConfigurationAwareModule;
+import io.trino.filesystem.s3.MelodyFileSystemFactory;
+import io.trino.filesystem.s3.S3FileSystemConfig;
 import io.trino.plugin.base.CatalogName;
 import io.trino.plugin.base.security.ConnectorAccessControlModule;
 import io.trino.plugin.base.session.SessionPropertiesProvider;
@@ -106,6 +108,9 @@ public class DeltaLakeModule
                 .setDefault().to(DeltaLakePageSourceProvider.class).in(Scopes.SINGLETON);
         binder.bind(ConnectorPageSinkProvider.class).to(DeltaLakePageSinkProvider.class).in(Scopes.SINGLETON);
         binder.bind(ConnectorNodePartitioningProvider.class).to(DeltaLakeNodePartitioningProvider.class).in(Scopes.SINGLETON);
+
+        configBinder(binder).bindConfig(S3FileSystemConfig.class);
+        binder.bind(MelodyFileSystemFactory.class).in(Scopes.SINGLETON);
 
         binder.bind(DeltaLakeMetadataFactory.class).in(Scopes.SINGLETON);
         binder.bind(CachingExtendedStatisticsAccess.class).in(Scopes.SINGLETON);

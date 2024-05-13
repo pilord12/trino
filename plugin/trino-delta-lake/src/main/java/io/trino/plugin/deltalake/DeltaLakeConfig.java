@@ -78,10 +78,49 @@ public class DeltaLakeConfig
     private boolean registerTableProcedureEnabled;
     private boolean projectionPushdownEnabled = true;
     private boolean queryPartitionFilterRequired;
+    private String clientId;
+    private String clientSecret;
+    private String oAuthUrl;
 
     public Duration getMetadataCacheTtl()
     {
         return metadataCacheTtl;
+    }
+
+    @Config("delta.connector-client-id")
+    public DeltaLakeConfig setClientId(String clientId)
+    {
+        this.clientId = clientId;
+        return this;
+    }
+
+    public String getClientId()
+    {
+        return clientId;
+    }
+
+    @Config("delta.connector-client-secret")
+    public DeltaLakeConfig setClientSecret(String clientSecret)
+    {
+        this.clientSecret = clientSecret;
+        return this;
+    }
+
+    public String getClientSecret()
+    {
+        return clientSecret;
+    }
+
+    @Config("delta.connector-oauth-url")
+    public DeltaLakeConfig setOAuthUrl(String oAuthUrl)
+    {
+        this.oAuthUrl = oAuthUrl;
+        return this;
+    }
+
+    public String getOAuthUrl()
+    {
+        return oAuthUrl;
     }
 
     @Config("delta.metadata.cache-ttl")

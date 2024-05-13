@@ -37,8 +37,6 @@ import io.trino.plugin.deltalake.transactionlog.writer.TransactionLogWriterFacto
 import io.trino.plugin.hive.FileFormatDataSourceStats;
 import io.trino.plugin.hive.HiveTransactionHandle;
 import io.trino.plugin.hive.NodeVersion;
-import io.trino.plugin.hive.metastore.HiveMetastoreFactory;
-import io.trino.plugin.hive.metastore.UnimplementedHiveMetastore;
 import io.trino.plugin.hive.parquet.ParquetReaderConfig;
 import io.trino.plugin.hive.parquet.ParquetWriterConfig;
 import io.trino.spi.SplitWeight;
@@ -201,8 +199,7 @@ public class TestDeltaLakeSplitManager
                 JsonCodec.jsonCodec(LastCheckpoint.class));
 
         DeltaLakeMetadataFactory metadataFactory = new DeltaLakeMetadataFactory(
-                HiveMetastoreFactory.ofInstance(new UnimplementedHiveMetastore()),
-                hdfsFileSystemFactory,
+                null,
                 transactionLogAccess,
                 typeManager,
                 DeltaLakeAccessControlMetadataFactory.DEFAULT,

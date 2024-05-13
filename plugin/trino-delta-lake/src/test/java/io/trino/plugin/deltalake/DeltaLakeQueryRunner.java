@@ -253,6 +253,9 @@ public final class DeltaLakeQueryRunner
                     ImmutableMap.of("http-server.http.port", "8080"),
                     ImmutableMap.of(
                             "delta.enable-non-concurrent-writes", "true",
+                            "delta.connector-client-id", "5c803829-bcff-48ea-9310-77e9c7a29a41_api",
+                            "delta.connector-client-secret", "", // GLP client secret
+                            "delta.connector-oauth-url", "https://qa-sso.ccs.arubathena.com/as/token.oauth2",
                             "hive.metastore", "file",
                             "hive.metastore.catalog.dir", metastoreDirectory.toUri().toString()));
 

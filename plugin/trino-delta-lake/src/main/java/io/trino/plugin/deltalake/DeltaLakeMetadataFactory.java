@@ -16,30 +16,23 @@ package io.trino.plugin.deltalake;
 import com.google.inject.Inject;
 import io.airlift.json.JsonCodec;
 import io.trino.filesystem.TrinoFileSystemFactory;
-import io.trino.plugin.deltalake.metastore.HiveMetastoreBackedDeltaLakeMetastore;
+import io.trino.filesystem.s3.MelodyFileSystemFactory;
 import io.trino.plugin.deltalake.statistics.CachingExtendedStatisticsAccess;
+import io.trino.plugin.deltalake.statistics.DeltaLakeTableStatisticsProvider;
 import io.trino.plugin.deltalake.statistics.FileBasedTableStatisticsProvider;
 import io.trino.plugin.deltalake.transactionlog.TransactionLogAccess;
 import io.trino.plugin.deltalake.transactionlog.checkpoint.CheckpointWriterManager;
 import io.trino.plugin.deltalake.transactionlog.writer.TransactionLogWriterFactory;
 import io.trino.plugin.hive.NodeVersion;
-import io.trino.plugin.hive.TrinoViewHiveMetastore;
-import io.trino.plugin.hive.metastore.HiveMetastoreFactory;
-import io.trino.plugin.hive.metastore.cache.CachingHiveMetastore;
-import io.trino.plugin.hive.security.AccessControlMetadata;
 import io.trino.spi.NodeManager;
 import io.trino.spi.security.ConnectorIdentity;
 import io.trino.spi.type.TypeManager;
 
-import java.util.Optional;
-
-import static io.trino.plugin.hive.metastore.cache.CachingHiveMetastore.memoizeMetastore;
 import static java.util.Objects.requireNonNull;
 
 public class DeltaLakeMetadataFactory
 {
-    private final HiveMetastoreFactory hiveMetastoreFactory;
-    private final TrinoFileSystemFactory fileSystemFactory;
+    private final MelodyFileSystemFactory fileSystemFactory;
     private final TransactionLogAccess transactionLogAccess;
     private final TypeManager typeManager;
     private final DeltaLakeAccessControlMetadataFactory accessControlMetadataFactory;
@@ -56,14 +49,14 @@ public class DeltaLakeMetadataFactory
     private final long perTransactionMetastoreCacheMaximumSize;
     private final boolean deleteSchemaLocationsFallback;
     private final boolean useUniqueTableLocation;
+    private final DeltaLakeConfig config;
 
     private final boolean allowManagedTableRename;
     private final String trinoVersion;
 
     @Inject
     public DeltaLakeMetadataFactory(
-            HiveMetastoreFactory hiveMetastoreFactory,
-            TrinoFileSystemFactory fileSystemFactory,
+            MelodyFileSystemFactory fileSystemFactory,
             TransactionLogAccess transactionLogAccess,
             TypeManager typeManager,
             DeltaLakeAccessControlMetadataFactory accessControlMetadataFactory,
@@ -78,7 +71,6 @@ public class DeltaLakeMetadataFactory
             @AllowDeltaLakeManagedTableRename boolean allowManagedTableRename,
             NodeVersion nodeVersion)
     {
-        this.hiveMetastoreFactory = requireNonNull(hiveMetastoreFactory, "hiveMetastore is null");
         this.fileSystemFactory = requireNonNull(fileSystemFactory, "fileSystemFactory is null");
         this.transactionLogAccess = requireNonNull(transactionLogAccess, "transactionLogAccess is null");
         this.typeManager = requireNonNull(typeManager, "typeManager is null");
@@ -98,33 +90,22 @@ public class DeltaLakeMetadataFactory
         this.useUniqueTableLocation = deltaLakeConfig.isUniqueTableLocation();
         this.allowManagedTableRename = allowManagedTableRename;
         this.trinoVersion = requireNonNull(nodeVersion, "nodeVersion is null").toString();
+        this.config = deltaLakeConfig;
     }
 
     public DeltaLakeMetadata create(ConnectorIdentity identity)
     {
-        // create per-transaction cache over hive metastore interface
-        CachingHiveMetastore cachingHiveMetastore = memoizeMetastore(
-                hiveMetastoreFactory.createMetastore(Optional.of(identity)),
-                perTransactionMetastoreCacheMaximumSize);
-        AccessControlMetadata accessControlMetadata = accessControlMetadataFactory.create(cachingHiveMetastore);
-        HiveMetastoreBackedDeltaLakeMetastore deltaLakeMetastore = new HiveMetastoreBackedDeltaLakeMetastore(cachingHiveMetastore);
+        MelodyDeltaLakeMetastore deltaLakeMetastore = new MelodyDeltaLakeMetastore();
         FileBasedTableStatisticsProvider tableStatisticsProvider = new FileBasedTableStatisticsProvider(
                 typeManager,
                 transactionLogAccess,
                 statisticsAccess);
-        TrinoViewHiveMetastore trinoViewHiveMetastore = new TrinoViewHiveMetastore(
-                cachingHiveMetastore,
-                accessControlMetadata.isUsingSystemSecurity(),
-                trinoVersion,
-                "Trino Delta Lake connector");
         return new DeltaLakeMetadata(
                 deltaLakeMetastore,
                 transactionLogAccess,
                 tableStatisticsProvider,
                 fileSystemFactory,
                 typeManager,
-                accessControlMetadata,
-                trinoViewHiveMetastore,
                 domainCompactionThreshold,
                 unsafeWritesEnabled,
                 dataFileInfoCodec,
@@ -137,6 +118,7 @@ public class DeltaLakeMetadataFactory
                 deltaLakeRedirectionsProvider,
                 statisticsAccess,
                 useUniqueTableLocation,
-                allowManagedTableRename);
+                allowManagedTableRename,
+                config);
     }
 }
