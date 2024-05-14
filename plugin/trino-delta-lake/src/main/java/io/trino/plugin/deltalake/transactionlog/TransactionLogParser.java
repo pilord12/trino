@@ -20,14 +20,15 @@ import dev.failsafe.Failsafe;
 import dev.failsafe.RetryPolicy;
 import io.airlift.json.ObjectMapperProvider;
 import io.airlift.log.Logger;
-import io.trino.filesystem.Location;
-import io.trino.filesystem.TrinoFileSystem;
-import io.trino.filesystem.TrinoInputFile;
+import io.trino.filesystem.*;
 import io.trino.filesystem.s3.S3FileSystem;
 import io.trino.plugin.base.util.JsonUtils;
 import io.trino.plugin.deltalake.DeltaLakeColumnHandle;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystem;
 import io.trino.plugin.deltalake.transactionlog.checkpoint.LastCheckpoint;
 import io.trino.spi.TrinoException;
+import io.trino.spi.connector.ConnectorSession;
+import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.type.DecimalType;
 import io.trino.spi.type.Decimals;
 import io.trino.spi.type.Type;
@@ -49,6 +50,7 @@ import java.time.format.ResolverStyle;
 import java.time.format.SignStyle;
 import java.time.temporal.ChronoField;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
 
@@ -233,7 +235,7 @@ public final class TransactionLogParser
                 format("Unable to parse value [%s] from column %s with type %s", valueString, column.getBaseColumnName(), column.getBaseType()));
     }
 
-    static Optional<LastCheckpoint> readLastCheckpoint(TrinoFileSystem fileSystem, String tableLocation)
+    static Optional<LastCheckpoint> readLastCheckpoint(TrinoFileSystem fileSystem, ConnectorSession session, SchemaTableName table, String tableLocation, Map<String, TrinoFileSystemFactory> factories)
     {
         return Failsafe.with(RetryPolicy.builder()
                         .withMaxRetries(5)
@@ -244,15 +246,17 @@ public final class TransactionLogParser
                             log.debug(event.getLastException(), "Failure when accessing last checkpoint information, will be retried");
                         })
                         .build())
-                .get(() -> tryReadLastCheckpoint(fileSystem, tableLocation));
+                .get(() -> tryReadLastCheckpoint(fileSystem, session, table, tableLocation, factories));
     }
 
-    private static Optional<LastCheckpoint> tryReadLastCheckpoint(TrinoFileSystem fileSystem, String tableLocation)
+    private static Optional<LastCheckpoint> tryReadLastCheckpoint(TrinoFileSystem fileSystem, ConnectorSession session, SchemaTableName table, String tableLocation, Map<String, TrinoFileSystemFactory> factories)
             throws JsonParseException, JsonMappingException
     {
         Location checkpointPath = Location.of(getTransactionLogDir(tableLocation)).appendPath(LAST_CHECKPOINT_FILENAME);
-//        S3FileSystem fs = (S3FileSystem) fileSystem;
-        TrinoInputFile inputFile = fileSystem.newInputFile(checkpointPath);
+//        TrinoInputFile inputFile = fileSystem.newInputFile(checkpointPath);
+        var s3Factory = factories.get("s3a");
+        var fs = (MelodyFileSystem) s3Factory.create(session);
+        TrinoInputFile inputFile = fs.newInputFile(checkpointPath);
         try (InputStream lastCheckpointInput = inputFile.newStream()) {
             // Note: there apparently is 8K buffering applied and _last_checkpoint should be much smaller.
             return Optional.of(JsonUtils.parseJson(OBJECT_MAPPER, lastCheckpointInput, LastCheckpoint.class));
@@ -269,10 +273,10 @@ public final class TransactionLogParser
         }
     }
 
-    public static long getMandatoryCurrentVersion(TrinoFileSystem fileSystem, String tableLocation)
+    public static long getMandatoryCurrentVersion(TrinoFileSystem fileSystem, ConnectorSession session, SchemaTableName table, String tableLocation, Map<String, TrinoFileSystemFactory> factories)
             throws IOException
     {
-        long version = readLastCheckpoint(fileSystem, tableLocation).map(LastCheckpoint::getVersion).orElse(0L);
+        long version = readLastCheckpoint(fileSystem, session, table, tableLocation, factories).map(LastCheckpoint::getVersion).orElse(0L);
 
         String transactionLogDir = getTransactionLogDir(tableLocation);
         while (true) {

@@ -90,7 +90,7 @@ public class TestTableSnapshot
         AtomicReference<TableSnapshot> tableSnapshot = new AtomicReference<>();
         assertFileSystemAccesses(
                 () -> {
-                    Optional<LastCheckpoint> lastCheckpoint = readLastCheckpoint(trackingFileSystem, tableLocation);
+                    Optional<LastCheckpoint> lastCheckpoint = readLastCheckpoint(trackingFileSystem, null, null, tableLocation, null);
                     tableSnapshot.set(load(
                             new SchemaTableName("schema", "person"),
                             lastCheckpoint,
@@ -98,7 +98,8 @@ public class TestTableSnapshot
                             tableLocation,
                             parquetReaderOptions,
                             true,
-                            domainCompactionThreshold));
+                            domainCompactionThreshold,
+                            null));
                 },
                 ImmutableMultiset.<FileOperation>builder()
                         .addCopies(new FileOperation("_last_checkpoint", INPUT_FILE_NEW_STREAM), 1)
@@ -120,7 +121,7 @@ public class TestTableSnapshot
     public void readsCheckpointFile()
             throws IOException
     {
-        Optional<LastCheckpoint> lastCheckpoint = readLastCheckpoint(trackingFileSystem, tableLocation);
+        Optional<LastCheckpoint> lastCheckpoint = readLastCheckpoint(trackingFileSystem, null, null, tableLocation, null);
         TableSnapshot tableSnapshot = load(
                 new SchemaTableName("schema", "person"),
                 lastCheckpoint,
@@ -128,7 +129,8 @@ public class TestTableSnapshot
                 tableLocation,
                 parquetReaderOptions,
                 true,
-                domainCompactionThreshold);
+                domainCompactionThreshold,
+                null);
         TestingConnectorContext context = new TestingConnectorContext();
         TypeManager typeManager = context.getTypeManager();
         TransactionLogAccess transactionLogAccess = new TransactionLogAccess(
@@ -137,7 +139,8 @@ public class TestTableSnapshot
                 new DeltaLakeConfig(),
                 new FileFormatDataSourceStats(),
                 trackingFileSystemFactory,
-                new ParquetReaderConfig());
+                new ParquetReaderConfig(),
+                null);
         MetadataEntry metadataEntry = transactionLogAccess.getMetadataEntry(tableSnapshot, SESSION);
         ProtocolEntry protocolEntry = transactionLogAccess.getProtocolEntry(SESSION, tableSnapshot);
         tableSnapshot.setCachedMetadata(Optional.of(metadataEntry));
@@ -231,7 +234,7 @@ public class TestTableSnapshot
     public void testMaxTransactionId()
             throws IOException
     {
-        Optional<LastCheckpoint> lastCheckpoint = readLastCheckpoint(trackingFileSystem, tableLocation);
+        Optional<LastCheckpoint> lastCheckpoint = readLastCheckpoint(trackingFileSystem, null, null, tableLocation, null);
         TableSnapshot tableSnapshot = load(
                 new SchemaTableName("schema", "person"),
                 lastCheckpoint,
@@ -239,7 +242,8 @@ public class TestTableSnapshot
                 tableLocation,
                 parquetReaderOptions,
                 true,
-                domainCompactionThreshold);
+                domainCompactionThreshold,
+                null);
         assertEquals(tableSnapshot.getVersion(), 13L);
     }
 

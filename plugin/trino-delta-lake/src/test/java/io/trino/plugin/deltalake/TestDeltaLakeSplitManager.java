@@ -180,7 +180,8 @@ public class TestDeltaLakeSplitManager
                 deltaLakeConfig,
                 new FileFormatDataSourceStats(),
                 hdfsFileSystemFactory,
-                new ParquetReaderConfig())
+                new ParquetReaderConfig(),
+                null)
         {
             @Override
             public List<AddFileEntry> getActiveFiles(TableSnapshot tableSnapshot, MetadataEntry metadataEntry, ProtocolEntry protocolEntry, ConnectorSession session)
@@ -213,7 +214,8 @@ public class TestDeltaLakeSplitManager
                 DeltaLakeRedirectionsProvider.NOOP,
                 new CachingExtendedStatisticsAccess(new MetaDirStatisticsAccess(HDFS_FILE_SYSTEM_FACTORY, new JsonCodecFactory().jsonCodec(ExtendedStatistics.class))),
                 true,
-                new NodeVersion("test_version"));
+                new NodeVersion("test_version"),
+                null);
 
         ConnectorSession session = testingConnectorSessionWithConfig(deltaLakeConfig);
         DeltaLakeTransactionManager deltaLakeTransactionManager = new DeltaLakeTransactionManager(metadataFactory);

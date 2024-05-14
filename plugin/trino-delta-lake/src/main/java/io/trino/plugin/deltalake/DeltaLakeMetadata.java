@@ -31,6 +31,7 @@ import io.airlift.units.DataSize;
 import io.trino.filesystem.FileIterator;
 import io.trino.filesystem.Location;
 import io.trino.filesystem.TrinoFileSystem;
+import io.trino.filesystem.TrinoFileSystemFactory;
 import io.trino.plugin.base.classloader.ClassLoaderSafeSystemTable;
 import io.trino.plugin.base.projection.ApplyProjectionUtil;
 import io.trino.plugin.deltalake.DeltaLakeAnalyzeProperties.AnalyzeMode;
@@ -395,6 +396,7 @@ public class DeltaLakeMetadata
     private final Map<QueriedTable, TableSnapshot> queriedSnapshots = new ConcurrentHashMap<>();
     private final CloseableHttpClient client = HttpClientBuilder.create().build();
     private final JwtTokenManager tm;
+    private final Map<String, TrinoFileSystemFactory> factories;
 
 
     private record QueriedTable(SchemaTableName schemaTableName, long version)
@@ -424,7 +426,8 @@ public class DeltaLakeMetadata
             CachingExtendedStatisticsAccess statisticsAccess,
             boolean useUniqueTableLocation,
             boolean allowManagedTableRename,
-            DeltaLakeConfig config)
+            DeltaLakeConfig config,
+            Map<String, TrinoFileSystemFactory> factories)
     {
         this.metastore = requireNonNull(metastore, "metastore is null");
         this.transactionLogAccess = requireNonNull(transactionLogAccess, "transactionLogAccess is null");
@@ -445,6 +448,7 @@ public class DeltaLakeMetadata
         this.deleteSchemaLocationsFallback = deleteSchemaLocationsFallback;
         this.useUniqueTableLocation = useUniqueTableLocation;
         this.allowManagedTableRename = allowManagedTableRename;
+        this.factories = factories;
         this.tm = new JwtTokenManager(config.getClientId(), config.getClientSecret(), config.getOAuthUrl(), client);
     }
 
@@ -603,7 +607,6 @@ public class DeltaLakeMetadata
         String domain = orgDomain[1];
 
         var request = new HttpGet("https://dev.dataplatform.hpedev.net/dev/data-catalog/organizations/" + org + "/domains/" + domain + "/assets/" + tableName.getTableName());
-        // TODO call access manager to authorize BI view permissions for specific asset
         request.addHeader("Content-Type", "application/json");
         request.addHeader("Authorization", "Bearer " + jwt);
 
@@ -1927,7 +1930,7 @@ public class DeltaLakeMetadata
                     table.getMetadataEntry(),
                     table.getProtocolEntry(),
                     inputColumns,
-                    getMandatoryCurrentVersion(fileSystem, tableLocation),
+                    getMandatoryCurrentVersion(fileSystem, session, table.getSchemaTableName(), tableLocation, factories),
                     retryMode != NO_RETRIES);
         }
         catch (IOException e) {
@@ -1975,7 +1978,7 @@ public class DeltaLakeMetadata
             long createdTime = Instant.now().toEpochMilli();
 
             TrinoFileSystem fileSystem = fileSystemFactory.create(session);
-            long commitVersion = getMandatoryCurrentVersion(fileSystem, handle.getLocation()) + 1;
+            long commitVersion = getMandatoryCurrentVersion(fileSystem, session, handle.getTableName(), handle.getLocation(), factories) + 1;
             if (commitVersion != handle.getReadVersion() + 1) {
                 throw new TransactionConflictException(format("Conflicting concurrent writes found. Expected transaction log version: %s, actual version: %s",
                         handle.getReadVersion(),
@@ -2129,7 +2132,7 @@ public class DeltaLakeMetadata
             long createdTime = Instant.now().toEpochMilli();
 
             TrinoFileSystem fileSystem = fileSystemFactory.create(session);
-            long currentVersion = getMandatoryCurrentVersion(fileSystem, tableLocation);
+            long currentVersion = getMandatoryCurrentVersion(fileSystem, session, mergeHandle.getTableHandle().getSchemaTableName(), tableLocation, factories);
             if (currentVersion != handle.getReadVersion()) {
                 throw new TransactionConflictException(format("Conflicting concurrent writes found. Expected transaction log version: %s, actual version: %s", handle.getReadVersion(), currentVersion));
             }
@@ -2499,7 +2502,7 @@ public class DeltaLakeMetadata
                 LOG.info("Snapshot for table %s already at version %s when checkpoint requested for version %s", table, snapshot.getVersion(), newVersion);
             }
 
-            TableSnapshot updatedSnapshot = snapshot.getUpdatedSnapshot(fileSystemFactory.create(session), Optional.of(newVersion)).orElseThrow();
+            TableSnapshot updatedSnapshot = snapshot.getUpdatedSnapshot(fileSystemFactory.create(session), Optional.of(newVersion), session, table).orElseThrow();
             checkpointWriterManager.writeCheckpoint(session, updatedSnapshot);
         }
         catch (Exception e) {
@@ -3600,7 +3603,7 @@ public class DeltaLakeMetadata
 
             long writeTimestamp = Instant.now().toEpochMilli();
             TrinoFileSystem fileSystem = fileSystemFactory.create(session);
-            long currentVersion = getMandatoryCurrentVersion(fileSystem, tableLocation);
+            long currentVersion = getMandatoryCurrentVersion(fileSystem, session, tableHandle.getSchemaTableName(), tableLocation, factories);
             if (currentVersion != tableHandle.getReadVersion()) {
                 throw new TransactionConflictException(format("Conflicting concurrent writes found. Expected transaction log version: %s, actual version: %s", tableHandle.getReadVersion(), currentVersion));
             }

@@ -35,8 +35,8 @@ public class TestTransactionLogParser
 
         String basePath = getClass().getClassLoader().getResource("databricks73").toURI().toString();
 
-        assertEquals(getMandatoryCurrentVersion(fileSystem, appendPath(basePath, "simple_table_without_checkpoint")), 9);
-        assertEquals(getMandatoryCurrentVersion(fileSystem, appendPath(basePath, "simple_table_ending_on_checkpoint")), 10);
-        assertEquals(getMandatoryCurrentVersion(fileSystem, appendPath(basePath, "simple_table_past_checkpoint")), 11);
+        assertEquals(getMandatoryCurrentVersion(fileSystem, null, null, appendPath(basePath, "simple_table_without_checkpoint"), null), 9);
+        assertEquals(getMandatoryCurrentVersion(fileSystem, null, null, appendPath(basePath, "simple_table_ending_on_checkpoint"), null), 10);
+        assertEquals(getMandatoryCurrentVersion(fileSystem, null, null, appendPath(basePath, "simple_table_past_checkpoint"), null), 11);
     }
 }

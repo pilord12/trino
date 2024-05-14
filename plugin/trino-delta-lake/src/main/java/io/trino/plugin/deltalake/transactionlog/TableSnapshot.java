@@ -16,6 +16,7 @@ package io.trino.plugin.deltalake.transactionlog;
 import com.google.common.collect.ImmutableList;
 import io.trino.filesystem.Location;
 import io.trino.filesystem.TrinoFileSystem;
+import io.trino.filesystem.TrinoFileSystemFactory;
 import io.trino.filesystem.TrinoInputFile;
 import io.trino.parquet.ParquetReaderOptions;
 import io.trino.plugin.deltalake.transactionlog.checkpoint.CheckpointEntryIterator;
@@ -30,10 +31,7 @@ import io.trino.spi.type.TypeManager;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Stream;
 
 import static com.google.common.base.Preconditions.checkState;
@@ -58,6 +56,7 @@ public class TableSnapshot
     private final ParquetReaderOptions parquetReaderOptions;
     private final boolean checkpointRowStatisticsWritingEnabled;
     private final int domainCompactionThreshold;
+    private final Map<String, TrinoFileSystemFactory> factories;
 
     private Optional<MetadataEntry> cachedMetadata = Optional.empty();
 
@@ -68,7 +67,8 @@ public class TableSnapshot
             String tableLocation,
             ParquetReaderOptions parquetReaderOptions,
             boolean checkpointRowStatisticsWritingEnabled,
-            int domainCompactionThreshold)
+            int domainCompactionThreshold,
+            Map<String, TrinoFileSystemFactory> factories)
     {
         this.table = requireNonNull(table, "table is null");
         this.lastCheckpoint = requireNonNull(lastCheckpoint, "lastCheckpoint is null");
@@ -77,6 +77,7 @@ public class TableSnapshot
         this.parquetReaderOptions = requireNonNull(parquetReaderOptions, "parquetReaderOptions is null");
         this.checkpointRowStatisticsWritingEnabled = checkpointRowStatisticsWritingEnabled;
         this.domainCompactionThreshold = domainCompactionThreshold;
+        this.factories = factories;
     }
 
     public static TableSnapshot load(
@@ -86,7 +87,8 @@ public class TableSnapshot
             String tableLocation,
             ParquetReaderOptions parquetReaderOptions,
             boolean checkpointRowStatisticsWritingEnabled,
-            int domainCompactionThreshold)
+            int domainCompactionThreshold,
+            Map<String, TrinoFileSystemFactory> factories)
             throws IOException
     {
         Optional<Long> lastCheckpointVersion = lastCheckpoint.map(LastCheckpoint::getVersion);
@@ -99,16 +101,17 @@ public class TableSnapshot
                 tableLocation,
                 parquetReaderOptions,
                 checkpointRowStatisticsWritingEnabled,
-                domainCompactionThreshold);
+                domainCompactionThreshold,
+                factories);
     }
 
-    public Optional<TableSnapshot> getUpdatedSnapshot(TrinoFileSystem fileSystem, Optional<Long> toVersion)
+    public Optional<TableSnapshot> getUpdatedSnapshot(TrinoFileSystem fileSystem, Optional<Long> toVersion, ConnectorSession session, SchemaTableName table)
             throws IOException
     {
         if (toVersion.isEmpty()) {
             // Load any newer table snapshot
 
-            Optional<LastCheckpoint> lastCheckpoint = readLastCheckpoint(fileSystem, tableLocation);
+            Optional<LastCheckpoint> lastCheckpoint = readLastCheckpoint(fileSystem, session, table, tableLocation, factories);
             if (lastCheckpoint.isPresent()) {
                 long ourCheckpointVersion = getLastCheckpointVersion().orElse(0L);
                 if (ourCheckpointVersion != lastCheckpoint.get().getVersion()) {
@@ -120,7 +123,8 @@ public class TableSnapshot
                             tableLocation,
                             parquetReaderOptions,
                             checkpointRowStatisticsWritingEnabled,
-                            domainCompactionThreshold));
+                            domainCompactionThreshold,
+                            factories));
                 }
             }
         }
@@ -133,7 +137,8 @@ public class TableSnapshot
                 tableLocation,
                 parquetReaderOptions,
                 checkpointRowStatisticsWritingEnabled,
-                domainCompactionThreshold));
+                domainCompactionThreshold,
+                factories));
     }
 
     public long getVersion()

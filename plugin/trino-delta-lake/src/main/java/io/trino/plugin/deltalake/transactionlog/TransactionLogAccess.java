@@ -95,6 +95,7 @@ public class TransactionLogAccess
     private final ParquetReaderOptions parquetReaderOptions;
     private final boolean checkpointRowStatisticsWritingEnabled;
     private final int domainCompactionThreshold;
+    private final Map<String, TrinoFileSystemFactory> factories;
 
     private final Cache<TableLocation, TableSnapshot> tableSnapshots;
     private final Cache<TableVersion, DeltaLakeDataFileCacheEntry> activeDataFileCache;
@@ -106,7 +107,8 @@ public class TransactionLogAccess
             DeltaLakeConfig deltaLakeConfig,
             FileFormatDataSourceStats fileFormatDataSourceStats,
             TrinoFileSystemFactory fileSystemFactory,
-            ParquetReaderConfig parquetReaderConfig)
+            ParquetReaderConfig parquetReaderConfig,
+            Map<String, TrinoFileSystemFactory> factories)
     {
         this.typeManager = requireNonNull(typeManager, "typeManager is null");
         this.checkpointSchemaManager = requireNonNull(checkpointSchemaManager, "checkpointSchemaManager is null");
@@ -115,6 +117,7 @@ public class TransactionLogAccess
         this.parquetReaderOptions = parquetReaderConfig.toParquetReaderOptions().withBloomFilter(false);
         this.checkpointRowStatisticsWritingEnabled = deltaLakeConfig.isCheckpointRowStatisticsWritingEnabled();
         this.domainCompactionThreshold = deltaLakeConfig.getDomainCompactionThreshold();
+        this.factories = requireNonNull(factories, "factories is null");
 
         tableSnapshots = EvictableCacheBuilder.newBuilder()
                 .expireAfterWrite(deltaLakeConfig.getMetadataCacheTtl().toMillis(), TimeUnit.MILLISECONDS)
@@ -154,7 +157,7 @@ public class TransactionLogAccess
         TrinoFileSystem fileSystem = fileSystemFactory.create(session);
         if (cachedSnapshot == null) {
             try {
-                Optional<LastCheckpoint> lastCheckpoint = readLastCheckpoint(fileSystem, tableLocation);
+                Optional<LastCheckpoint> lastCheckpoint = readLastCheckpoint(fileSystem, session, table, tableLocation, factories);
                 snapshot = tableSnapshots.get(cacheKey, () ->
                         TableSnapshot.load(
                                 table,
@@ -163,7 +166,8 @@ public class TransactionLogAccess
                                 tableLocation,
                                 parquetReaderOptions,
                                 checkpointRowStatisticsWritingEnabled,
-                                domainCompactionThreshold));
+                                domainCompactionThreshold,
+                                factories));
             }
             catch (UncheckedExecutionException | ExecutionException e) {
                 throwIfUnchecked(e.getCause());
@@ -171,7 +175,7 @@ public class TransactionLogAccess
             }
         }
         else {
-            Optional<TableSnapshot> updatedSnapshot = cachedSnapshot.getUpdatedSnapshot(fileSystem, Optional.empty());
+            Optional<TableSnapshot> updatedSnapshot = cachedSnapshot.getUpdatedSnapshot(fileSystem, Optional.empty(), session, table);
             if (updatedSnapshot.isPresent()) {
                 snapshot = updatedSnapshot.get();
                 tableSnapshots.asMap().replace(cacheKey, cachedSnapshot, snapshot);
