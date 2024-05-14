@@ -257,6 +257,7 @@ public final class DeltaLakeQueryRunner
                             "delta.connector-client-secret", "", // GLP client secret
                             "delta.connector-oauth-url", "https://qa-sso.ccs.arubathena.com/as/token.oauth2",
                             "hive.metastore", "file",
+//                            "fs.native-s3.enabled", "true",
                             "hive.metastore.catalog.dir", metastoreDirectory.toUri().toString()));
 
             copyTpchTables(queryRunner, "tpch", TINY_SCHEMA_NAME, createSession(), TpchTable.getTables());

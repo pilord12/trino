@@ -23,6 +23,7 @@ import io.airlift.log.Logger;
 import io.trino.filesystem.Location;
 import io.trino.filesystem.TrinoFileSystem;
 import io.trino.filesystem.TrinoInputFile;
+import io.trino.filesystem.s3.S3FileSystem;
 import io.trino.plugin.base.util.JsonUtils;
 import io.trino.plugin.deltalake.DeltaLakeColumnHandle;
 import io.trino.plugin.deltalake.transactionlog.checkpoint.LastCheckpoint;
@@ -250,6 +251,7 @@ public final class TransactionLogParser
             throws JsonParseException, JsonMappingException
     {
         Location checkpointPath = Location.of(getTransactionLogDir(tableLocation)).appendPath(LAST_CHECKPOINT_FILENAME);
+//        S3FileSystem fs = (S3FileSystem) fileSystem;
         TrinoInputFile inputFile = fileSystem.newInputFile(checkpointPath);
         try (InputStream lastCheckpointInput = inputFile.newStream()) {
             // Note: there apparently is 8K buffering applied and _last_checkpoint should be much smaller.

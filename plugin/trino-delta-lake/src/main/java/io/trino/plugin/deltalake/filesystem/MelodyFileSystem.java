@@ -11,7 +11,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.trino.filesystem.s3;
+package io.trino.plugin.deltalake.filesystem;
 
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.SetMultimap;
@@ -20,16 +20,10 @@ import io.trino.filesystem.Location;
 import io.trino.filesystem.TrinoFileSystem;
 import io.trino.filesystem.TrinoInputFile;
 import io.trino.filesystem.TrinoOutputFile;
+import io.trino.filesystem.s3.S3Context;
 import software.amazon.awssdk.core.exception.SdkException;
+import software.amazon.awssdk.services.s3.model.*;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.CommonPrefix;
-import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
-import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
-import software.amazon.awssdk.services.s3.model.DeleteObjectsResponse;
-import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
-import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
-import software.amazon.awssdk.services.s3.model.RequestPayer;
-import software.amazon.awssdk.services.s3.model.S3Error;
 import software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable;
 
 import java.io.IOException;
@@ -47,14 +41,14 @@ import static com.google.common.collect.Iterables.partition;
 import static com.google.common.collect.Multimaps.toMultimap;
 import static java.util.Objects.requireNonNull;
 
-public final class S3FileSystem
+public final class MelodyFileSystem
         implements TrinoFileSystem
 {
     private final S3Client client;
     private final S3Context context;
     private final RequestPayer requestPayer;
 
-    public S3FileSystem(S3Client client, S3Context context)
+    public MelodyFileSystem(S3Client client, S3Context context)
     {
         this.client = requireNonNull(client, "client is null");
         this.context = requireNonNull(context, "context is null");

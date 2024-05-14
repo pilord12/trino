@@ -21,11 +21,13 @@ import com.google.inject.Scopes;
 import com.google.inject.Singleton;
 import com.google.inject.multibindings.Multibinder;
 import io.airlift.configuration.AbstractConfigurationAwareModule;
-import io.trino.filesystem.s3.MelodyFileSystemFactory;
+import io.trino.filesystem.TrinoFileSystemFactory;
 import io.trino.filesystem.s3.S3FileSystemConfig;
+import io.trino.filesystem.s3.S3FileSystemModule;
 import io.trino.plugin.base.CatalogName;
 import io.trino.plugin.base.security.ConnectorAccessControlModule;
 import io.trino.plugin.base.session.SessionPropertiesProvider;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystemFactory;
 import io.trino.plugin.deltalake.functions.tablechanges.TableChangesFunctionProvider;
 import io.trino.plugin.deltalake.functions.tablechanges.TableChangesProcessorProvider;
 import io.trino.plugin.deltalake.procedure.DropExtendedStatsProcedure;
@@ -111,6 +113,12 @@ public class DeltaLakeModule
 
         configBinder(binder).bindConfig(S3FileSystemConfig.class);
         binder.bind(MelodyFileSystemFactory.class).in(Scopes.SINGLETON);
+
+        var factories = newMapBinder(binder, String.class, TrinoFileSystemFactory.class);
+//        install(new S3FileSystemModule());
+        factories.addBinding("s3").to(MelodyFileSystemFactory.class);
+        factories.addBinding("s3a").to(MelodyFileSystemFactory.class);
+        factories.addBinding("s3n").to(MelodyFileSystemFactory.class);
 
         binder.bind(DeltaLakeMetadataFactory.class).in(Scopes.SINGLETON);
         binder.bind(CachingExtendedStatisticsAccess.class).in(Scopes.SINGLETON);

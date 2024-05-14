@@ -15,10 +15,8 @@ package io.trino.plugin.deltalake;
 
 import com.google.inject.Inject;
 import io.airlift.json.JsonCodec;
-import io.trino.filesystem.TrinoFileSystemFactory;
-import io.trino.filesystem.s3.MelodyFileSystemFactory;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystemFactory;
 import io.trino.plugin.deltalake.statistics.CachingExtendedStatisticsAccess;
-import io.trino.plugin.deltalake.statistics.DeltaLakeTableStatisticsProvider;
 import io.trino.plugin.deltalake.statistics.FileBasedTableStatisticsProvider;
 import io.trino.plugin.deltalake.transactionlog.TransactionLogAccess;
 import io.trino.plugin.deltalake.transactionlog.checkpoint.CheckpointWriterManager;
