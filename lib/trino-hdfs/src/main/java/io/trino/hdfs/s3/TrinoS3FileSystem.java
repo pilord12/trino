@@ -109,6 +109,7 @@ import org.apache.hadoop.fs.RemoteIterator;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.util.Progressable;
 import org.gaul.modernizer_maven_annotations.SuppressModernizer;
+import software.amazon.awssdk.services.s3.S3Client;
 
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
@@ -125,18 +126,7 @@ import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Base64;
-import java.util.Collection;
-import java.util.Date;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.OptionalInt;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -280,6 +270,7 @@ public class TrinoS3FileSystem
     private int streamingUploadPartSize;
     private TrinoS3StorageClass s3StorageClass;
     private String s3RoleSessionName;
+    private final HashMap<String, S3Client> clients = new HashMap<>();
 
     private final ExecutorService uploadExecutor = newCachedThreadPool(threadsNamed("s3-upload-%s"));
     private final ForwardingRequestHandler forwardingRequestHandler = new ForwardingRequestHandler();
