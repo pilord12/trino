@@ -140,7 +140,7 @@ public class TestTransactionLogAccess
                 new CheckpointSchemaManager(typeManager),
                 deltaLakeConfig,
                 fileFormatDataSourceStats,
-                trackingFileSystemFactory,
+                null,
                 new ParquetReaderConfig(),
                 null);
 

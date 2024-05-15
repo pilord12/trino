@@ -19,6 +19,7 @@ import io.trino.filesystem.TrinoFileSystem;
 import io.trino.filesystem.TrinoFileSystemFactory;
 import io.trino.filesystem.TrinoInputFile;
 import io.trino.parquet.ParquetReaderOptions;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystem;
 import io.trino.plugin.deltalake.transactionlog.checkpoint.CheckpointEntryIterator;
 import io.trino.plugin.deltalake.transactionlog.checkpoint.CheckpointSchemaManager;
 import io.trino.plugin.deltalake.transactionlog.checkpoint.LastCheckpoint;
@@ -105,7 +106,7 @@ public class TableSnapshot
                 factories);
     }
 
-    public Optional<TableSnapshot> getUpdatedSnapshot(TrinoFileSystem fileSystem, Optional<Long> toVersion, ConnectorSession session, SchemaTableName table)
+    public Optional<TableSnapshot> getUpdatedSnapshot(MelodyFileSystem fileSystem, Optional<Long> toVersion, ConnectorSession session, SchemaTableName table)
             throws IOException
     {
         if (toVersion.isEmpty()) {

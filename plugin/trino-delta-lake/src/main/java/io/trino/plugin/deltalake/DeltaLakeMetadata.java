@@ -37,6 +37,7 @@ import io.trino.plugin.base.projection.ApplyProjectionUtil;
 import io.trino.plugin.deltalake.DeltaLakeAnalyzeProperties.AnalyzeMode;
 import io.trino.plugin.deltalake.expression.ParsingException;
 import io.trino.plugin.deltalake.expression.SparkExpressionParser;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystem;
 import io.trino.plugin.deltalake.filesystem.MelodyFileSystemFactory;
 import io.trino.plugin.deltalake.metastore.DeltaLakeMetastore;
 import io.trino.plugin.deltalake.metastore.DeltaMetastoreTable;
@@ -1923,7 +1924,7 @@ public class DeltaLakeMetadata
     {
         String tableLocation = table.getLocation();
         try {
-            TrinoFileSystem fileSystem = fileSystemFactory.create(session);
+            MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
             return new DeltaLakeInsertTableHandle(
                     table.getSchemaTableName(),
                     tableLocation,
@@ -1977,7 +1978,7 @@ public class DeltaLakeMetadata
 
             long createdTime = Instant.now().toEpochMilli();
 
-            TrinoFileSystem fileSystem = fileSystemFactory.create(session);
+            MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
             long commitVersion = getMandatoryCurrentVersion(fileSystem, session, handle.getTableName(), handle.getLocation(), factories) + 1;
             if (commitVersion != handle.getReadVersion() + 1) {
                 throw new TransactionConflictException(format("Conflicting concurrent writes found. Expected transaction log version: %s, actual version: %s",
@@ -2131,7 +2132,7 @@ public class DeltaLakeMetadata
 
             long createdTime = Instant.now().toEpochMilli();
 
-            TrinoFileSystem fileSystem = fileSystemFactory.create(session);
+            MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
             long currentVersion = getMandatoryCurrentVersion(fileSystem, session, mergeHandle.getTableHandle().getSchemaTableName(), tableLocation, factories);
             if (currentVersion != handle.getReadVersion()) {
                 throw new TransactionConflictException(format("Conflicting concurrent writes found. Expected transaction log version: %s, actual version: %s", handle.getReadVersion(), currentVersion));
@@ -2502,7 +2503,8 @@ public class DeltaLakeMetadata
                 LOG.info("Snapshot for table %s already at version %s when checkpoint requested for version %s", table, snapshot.getVersion(), newVersion);
             }
 
-            TableSnapshot updatedSnapshot = snapshot.getUpdatedSnapshot(fileSystemFactory.create(session), Optional.of(newVersion), session, table).orElseThrow();
+            MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
+            TableSnapshot updatedSnapshot = snapshot.getUpdatedSnapshot(fileSystem, Optional.of(newVersion), session, table).orElseThrow();
             checkpointWriterManager.writeCheckpoint(session, updatedSnapshot);
         }
         catch (Exception e) {
@@ -3602,7 +3604,7 @@ public class DeltaLakeMetadata
             TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, tableLocation);
 
             long writeTimestamp = Instant.now().toEpochMilli();
-            TrinoFileSystem fileSystem = fileSystemFactory.create(session);
+            MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
             long currentVersion = getMandatoryCurrentVersion(fileSystem, session, tableHandle.getSchemaTableName(), tableLocation, factories);
             if (currentVersion != tableHandle.getReadVersion()) {
                 throw new TransactionConflictException(format("Conflicting concurrent writes found. Expected transaction log version: %s, actual version: %s", tableHandle.getReadVersion(), currentVersion));

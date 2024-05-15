@@ -90,7 +90,7 @@ public class TestTableSnapshot
         AtomicReference<TableSnapshot> tableSnapshot = new AtomicReference<>();
         assertFileSystemAccesses(
                 () -> {
-                    Optional<LastCheckpoint> lastCheckpoint = readLastCheckpoint(trackingFileSystem, null, null, tableLocation, null);
+                    Optional<LastCheckpoint> lastCheckpoint = readLastCheckpoint(null, null, null, tableLocation, null);
                     tableSnapshot.set(load(
                             new SchemaTableName("schema", "person"),
                             lastCheckpoint,
@@ -121,7 +121,7 @@ public class TestTableSnapshot
     public void readsCheckpointFile()
             throws IOException
     {
-        Optional<LastCheckpoint> lastCheckpoint = readLastCheckpoint(trackingFileSystem, null, null, tableLocation, null);
+        Optional<LastCheckpoint> lastCheckpoint = readLastCheckpoint(null, null, null, tableLocation, null);
         TableSnapshot tableSnapshot = load(
                 new SchemaTableName("schema", "person"),
                 lastCheckpoint,
@@ -138,7 +138,7 @@ public class TestTableSnapshot
                 new CheckpointSchemaManager(typeManager),
                 new DeltaLakeConfig(),
                 new FileFormatDataSourceStats(),
-                trackingFileSystemFactory,
+                null,
                 new ParquetReaderConfig(),
                 null);
         MetadataEntry metadataEntry = transactionLogAccess.getMetadataEntry(tableSnapshot, SESSION);
@@ -234,7 +234,7 @@ public class TestTableSnapshot
     public void testMaxTransactionId()
             throws IOException
     {
-        Optional<LastCheckpoint> lastCheckpoint = readLastCheckpoint(trackingFileSystem, null, null, tableLocation, null);
+        Optional<LastCheckpoint> lastCheckpoint = readLastCheckpoint(null, null, null, tableLocation, null);
         TableSnapshot tableSnapshot = load(
                 new SchemaTableName("schema", "person"),
                 lastCheckpoint,

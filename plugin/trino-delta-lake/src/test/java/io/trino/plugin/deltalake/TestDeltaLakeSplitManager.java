@@ -179,7 +179,7 @@ public class TestDeltaLakeSplitManager
                 new CheckpointSchemaManager(typeManager),
                 deltaLakeConfig,
                 new FileFormatDataSourceStats(),
-                hdfsFileSystemFactory,
+                null,
                 new ParquetReaderConfig(),
                 null)
         {

@@ -29,6 +29,8 @@ import io.trino.filesystem.TrinoInputFile;
 import io.trino.parquet.ParquetReaderOptions;
 import io.trino.plugin.deltalake.DeltaLakeColumnMetadata;
 import io.trino.plugin.deltalake.DeltaLakeConfig;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystem;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystemFactory;
 import io.trino.plugin.deltalake.transactionlog.TableSnapshot.MetadataAndProtocolEntry;
 import io.trino.plugin.deltalake.transactionlog.checkpoint.CheckpointEntryIterator;
 import io.trino.plugin.deltalake.transactionlog.checkpoint.CheckpointSchemaManager;
@@ -106,7 +108,7 @@ public class TransactionLogAccess
             CheckpointSchemaManager checkpointSchemaManager,
             DeltaLakeConfig deltaLakeConfig,
             FileFormatDataSourceStats fileFormatDataSourceStats,
-            TrinoFileSystemFactory fileSystemFactory,
+            MelodyFileSystemFactory fileSystemFactory,
             ParquetReaderConfig parquetReaderConfig,
             Map<String, TrinoFileSystemFactory> factories)
     {
@@ -154,7 +156,7 @@ public class TransactionLogAccess
         TableLocation cacheKey = new TableLocation(table, tableLocation);
         TableSnapshot cachedSnapshot = tableSnapshots.getIfPresent(cacheKey);
         TableSnapshot snapshot;
-        TrinoFileSystem fileSystem = fileSystemFactory.create(session);
+        MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
         if (cachedSnapshot == null) {
             try {
                 Optional<LastCheckpoint> lastCheckpoint = readLastCheckpoint(fileSystem, session, table, tableLocation, factories);

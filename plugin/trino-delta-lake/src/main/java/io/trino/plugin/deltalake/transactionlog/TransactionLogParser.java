@@ -235,7 +235,7 @@ public final class TransactionLogParser
                 format("Unable to parse value [%s] from column %s with type %s", valueString, column.getBaseColumnName(), column.getBaseType()));
     }
 
-    static Optional<LastCheckpoint> readLastCheckpoint(TrinoFileSystem fileSystem, ConnectorSession session, SchemaTableName table, String tableLocation, Map<String, TrinoFileSystemFactory> factories)
+    static Optional<LastCheckpoint> readLastCheckpoint(MelodyFileSystem fileSystem, ConnectorSession session, SchemaTableName table, String tableLocation, Map<String, TrinoFileSystemFactory> factories)
     {
         return Failsafe.with(RetryPolicy.builder()
                         .withMaxRetries(5)
@@ -249,14 +249,11 @@ public final class TransactionLogParser
                 .get(() -> tryReadLastCheckpoint(fileSystem, session, table, tableLocation, factories));
     }
 
-    private static Optional<LastCheckpoint> tryReadLastCheckpoint(TrinoFileSystem fileSystem, ConnectorSession session, SchemaTableName table, String tableLocation, Map<String, TrinoFileSystemFactory> factories)
+    private static Optional<LastCheckpoint> tryReadLastCheckpoint(MelodyFileSystem fileSystem, ConnectorSession session, SchemaTableName table, String tableLocation, Map<String, TrinoFileSystemFactory> factories)
             throws JsonParseException, JsonMappingException
     {
         Location checkpointPath = Location.of(getTransactionLogDir(tableLocation)).appendPath(LAST_CHECKPOINT_FILENAME);
-//        TrinoInputFile inputFile = fileSystem.newInputFile(checkpointPath);
-        var s3Factory = factories.get("s3a");
-        var fs = (MelodyFileSystem) s3Factory.create(session);
-        TrinoInputFile inputFile = fs.newInputFile(checkpointPath);
+        TrinoInputFile inputFile = fileSystem.newInputFile(checkpointPath);
         try (InputStream lastCheckpointInput = inputFile.newStream()) {
             // Note: there apparently is 8K buffering applied and _last_checkpoint should be much smaller.
             return Optional.of(JsonUtils.parseJson(OBJECT_MAPPER, lastCheckpointInput, LastCheckpoint.class));
@@ -273,7 +270,7 @@ public final class TransactionLogParser
         }
     }
 
-    public static long getMandatoryCurrentVersion(TrinoFileSystem fileSystem, ConnectorSession session, SchemaTableName table, String tableLocation, Map<String, TrinoFileSystemFactory> factories)
+    public static long getMandatoryCurrentVersion(MelodyFileSystem fileSystem, ConnectorSession session, SchemaTableName table, String tableLocation, Map<String, TrinoFileSystemFactory> factories)
             throws IOException
     {
         long version = readLastCheckpoint(fileSystem, session, table, tableLocation, factories).map(LastCheckpoint::getVersion).orElse(0L);

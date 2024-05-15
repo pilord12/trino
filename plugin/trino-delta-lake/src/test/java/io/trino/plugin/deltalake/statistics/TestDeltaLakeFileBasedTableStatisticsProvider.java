@@ -83,7 +83,7 @@ public class TestDeltaLakeFileBasedTableStatisticsProvider
                 checkpointSchemaManager,
                 new DeltaLakeConfig(),
                 fileFormatDataSourceStats,
-                HDFS_FILE_SYSTEM_FACTORY,
+                null,
                 new ParquetReaderConfig(),
                 null);
 
