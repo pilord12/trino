@@ -84,16 +84,17 @@ public class TableSnapshot
     public static TableSnapshot load(
             SchemaTableName table,
             Optional<LastCheckpoint> lastCheckpoint,
-            TrinoFileSystem fileSystem,
+            MelodyFileSystem fileSystem,
             String tableLocation,
             ParquetReaderOptions parquetReaderOptions,
             boolean checkpointRowStatisticsWritingEnabled,
             int domainCompactionThreshold,
-            Map<String, TrinoFileSystemFactory> factories)
+            Map<String, TrinoFileSystemFactory> factories,
+            ConnectorSession session)
             throws IOException
     {
         Optional<Long> lastCheckpointVersion = lastCheckpoint.map(LastCheckpoint::getVersion);
-        TransactionLogTail transactionLogTail = TransactionLogTail.loadNewTail(fileSystem, tableLocation, lastCheckpointVersion);
+        TransactionLogTail transactionLogTail = TransactionLogTail.loadNewTail(fileSystem, tableLocation, lastCheckpointVersion, session, table);
 
         return new TableSnapshot(
                 table,
@@ -125,12 +126,13 @@ public class TableSnapshot
                             parquetReaderOptions,
                             checkpointRowStatisticsWritingEnabled,
                             domainCompactionThreshold,
-                            factories));
+                            factories,
+                            session));
                 }
             }
         }
 
-        Optional<TransactionLogTail> updatedLogTail = logTail.getUpdatedTail(fileSystem, tableLocation, toVersion);
+        Optional<TransactionLogTail> updatedLogTail = logTail.getUpdatedTail(fileSystem, tableLocation, toVersion, session, table);
         return updatedLogTail.map(transactionLogTail -> new TableSnapshot(
                 table,
                 lastCheckpoint,

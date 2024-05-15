@@ -17,6 +17,8 @@ import com.google.common.collect.ImmutableList;
 import io.trino.filesystem.Locations;
 import io.trino.filesystem.TrinoFileSystem;
 import io.trino.filesystem.TrinoFileSystemFactory;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystem;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystemFactory;
 import io.trino.plugin.deltalake.transactionlog.AddFileEntry;
 import io.trino.plugin.deltalake.transactionlog.CdcEntry;
 import io.trino.plugin.deltalake.transactionlog.CommitInfoEntry;
@@ -25,6 +27,7 @@ import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorSplit;
 import io.trino.spi.connector.ConnectorSplitSource;
+import io.trino.spi.connector.SchemaTableName;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -53,10 +56,12 @@ public class TableChangesSplitSource
 {
     private final String tableLocation;
     private final Iterator<ConnectorSplit> splits;
+    private final ConnectorSession session;
+    private final SchemaTableName table;
 
     public TableChangesSplitSource(
             ConnectorSession session,
-            TrinoFileSystemFactory fileSystemFactory,
+            MelodyFileSystemFactory fileSystemFactory,
             TableChangesTableFunctionHandle functionHandle)
     {
         tableLocation = functionHandle.tableLocation();
@@ -64,17 +69,19 @@ public class TableChangesSplitSource
                 functionHandle.firstReadVersion(),
                 functionHandle.tableReadVersion(),
                 getTransactionLogDir(functionHandle.tableLocation()),
-                fileSystemFactory.create(session))
+                (MelodyFileSystem) fileSystemFactory.create(session))
                 .iterator();
+        this.session = session;
+        this.table = functionHandle.schemaTableName();
     }
 
-    private Stream<ConnectorSplit> prepareSplits(long currentVersion, long tableReadVersion, String transactionLogDir, TrinoFileSystem fileSystem)
+    private Stream<ConnectorSplit> prepareSplits(long currentVersion, long tableReadVersion, String transactionLogDir, MelodyFileSystem fileSystem)
     {
         return LongStream.range(currentVersion, tableReadVersion + 1)
                 .boxed()
                 .flatMap(version -> {
                     try {
-                        List<DeltaLakeTransactionLogEntry> entries = getEntriesFromJson(version, transactionLogDir, fileSystem)
+                        List<DeltaLakeTransactionLogEntry> entries = getEntriesFromJson(version, transactionLogDir, fileSystem, session, table)
                                 .orElseThrow(() -> new TrinoException(DELTA_LAKE_BAD_DATA, "Delta Lake log entries are missing for version " + version));
                         if (entries.isEmpty()) {
                             return ImmutableList.<ConnectorSplit>of().stream();

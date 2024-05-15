@@ -16,6 +16,8 @@ package io.trino.plugin.deltalake.transactionlog.checkpoint;
 import io.trino.filesystem.TrinoFileSystem;
 import io.trino.filesystem.hdfs.HdfsFileSystemFactory;
 import io.trino.plugin.deltalake.transactionlog.DeltaLakeTransactionLogEntry;
+import io.trino.spi.connector.ConnectorSession;
+import io.trino.spi.connector.SchemaTableName;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -50,8 +52,8 @@ public class TestTransactionLogTail
             throws Exception
     {
         TrinoFileSystem fileSystem = new HdfsFileSystemFactory(HDFS_ENVIRONMENT, HDFS_FILE_SYSTEM_STATS).create(SESSION);
-        TransactionLogTail transactionLogTail = TransactionLogTail.loadNewTail(fileSystem, tableLocation, Optional.of(10L), Optional.of(12L));
-        Optional<TransactionLogTail> updatedLogTail = transactionLogTail.getUpdatedTail(fileSystem, tableLocation, Optional.empty());
+        TransactionLogTail transactionLogTail = TransactionLogTail.loadNewTail(null, tableLocation, Optional.of(10L), Optional.of(12L), null, null);
+        Optional<TransactionLogTail> updatedLogTail = transactionLogTail.getUpdatedTail(null, tableLocation, Optional.empty(), null, null);
         assertTrue(updatedLogTail.isPresent());
         return updatedLogTail.get().getFileEntries();
     }
@@ -60,7 +62,7 @@ public class TestTransactionLogTail
             throws Exception
     {
         TrinoFileSystem fileSystem = new HdfsFileSystemFactory(HDFS_ENVIRONMENT, HDFS_FILE_SYSTEM_STATS).create(SESSION);
-        TransactionLogTail transactionLogTail = TransactionLogTail.loadNewTail(fileSystem, tableLocation, Optional.of(10L));
+        TransactionLogTail transactionLogTail = TransactionLogTail.loadNewTail(null, tableLocation, Optional.of(10L), null, null);
         return transactionLogTail.getFileEntries();
     }
 }

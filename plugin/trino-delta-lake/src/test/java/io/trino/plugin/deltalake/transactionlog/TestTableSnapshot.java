@@ -94,11 +94,12 @@ public class TestTableSnapshot
                     tableSnapshot.set(load(
                             new SchemaTableName("schema", "person"),
                             lastCheckpoint,
-                            trackingFileSystem,
+                            null,
                             tableLocation,
                             parquetReaderOptions,
                             true,
                             domainCompactionThreshold,
+                            null,
                             null));
                 },
                 ImmutableMultiset.<FileOperation>builder()
@@ -125,11 +126,12 @@ public class TestTableSnapshot
         TableSnapshot tableSnapshot = load(
                 new SchemaTableName("schema", "person"),
                 lastCheckpoint,
-                trackingFileSystem,
+                null,
                 tableLocation,
                 parquetReaderOptions,
                 true,
                 domainCompactionThreshold,
+                null,
                 null);
         TestingConnectorContext context = new TestingConnectorContext();
         TypeManager typeManager = context.getTypeManager();
@@ -238,11 +240,12 @@ public class TestTableSnapshot
         TableSnapshot tableSnapshot = load(
                 new SchemaTableName("schema", "person"),
                 lastCheckpoint,
-                trackingFileSystem,
+                null,
                 tableLocation,
                 parquetReaderOptions,
                 true,
                 domainCompactionThreshold,
+                null,
                 null);
         assertEquals(tableSnapshot.getVersion(), 13L);
     }

@@ -1002,7 +1002,7 @@ public class TestDeltaLakeAnalyze
                         """);
 
         // Version 3 should be created with recalculated statistics.
-        List<DeltaLakeTransactionLogEntry> transactionLogAfterUpdate = getEntriesFromJson(3, tableLocation + "/_delta_log", FILE_SYSTEM).orElseThrow();
+        List<DeltaLakeTransactionLogEntry> transactionLogAfterUpdate = getEntriesFromJson(3, tableLocation + "/_delta_log", null, null, null).orElseThrow();
         assertThat(transactionLogAfterUpdate).hasSize(2);
         AddFileEntry updateAddFileEntry = transactionLogAfterUpdate.get(1).getAdd();
         DeltaLakeFileStatistics updateStats = updateAddFileEntry.getStats().orElseThrow();

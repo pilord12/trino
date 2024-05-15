@@ -16,6 +16,8 @@ package io.trino.plugin.deltalake;
 import com.google.common.collect.ImmutableList;
 import io.trino.filesystem.TrinoFileSystem;
 import io.trino.filesystem.TrinoFileSystemFactory;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystem;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystemFactory;
 import io.trino.plugin.deltalake.transactionlog.CommitInfoEntry;
 import io.trino.plugin.deltalake.transactionlog.DeltaLakeTransactionLogEntry;
 import io.trino.plugin.deltalake.transactionlog.TableSnapshot;
@@ -62,14 +64,14 @@ public class DeltaLakeHistoryTable
 {
     private final SchemaTableName tableName;
     private final String tableLocation;
-    private final TrinoFileSystemFactory fileSystemFactory;
+    private final MelodyFileSystemFactory fileSystemFactory;
     private final TransactionLogAccess transactionLogAccess;
     private final ConnectorTableMetadata tableMetadata;
 
     public DeltaLakeHistoryTable(
             SchemaTableName tableName,
             String tableLocation,
-            TrinoFileSystemFactory fileSystemFactory,
+            MelodyFileSystemFactory fileSystemFactory,
             TransactionLogAccess transactionLogAccess,
             TypeManager typeManager)
     {
@@ -163,9 +165,9 @@ public class DeltaLakeHistoryTable
             endVersionInclusive = Optional.of(snapshotVersion);
         }
 
-        TrinoFileSystem fileSystem = fileSystemFactory.create(session);
+        MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
         try {
-            List<CommitInfoEntry> commitInfoEntries = loadNewTailBackward(fileSystem, tableLocation, startVersionExclusive, endVersionInclusive.get()).stream()
+            List<CommitInfoEntry> commitInfoEntries = loadNewTailBackward(fileSystem, tableLocation, startVersionExclusive, endVersionInclusive.get(), session, tableName).stream()
                     .map(DeltaLakeTransactionLogEntry::getCommitInfo)
                     .filter(Objects::nonNull)
                     .collect(toImmutableList())
@@ -182,10 +184,12 @@ public class DeltaLakeHistoryTable
 
     // Load a section of the Transaction Log JSON entries. Optionally from a given end version (inclusive) through an start version (exclusive)
     private static List<DeltaLakeTransactionLogEntry> loadNewTailBackward(
-            TrinoFileSystem fileSystem,
+            MelodyFileSystem fileSystem,
             String tableLocation,
             Optional<Long> startVersion,
-            long endVersion)
+            long endVersion,
+            ConnectorSession session,
+            SchemaTableName table)
             throws IOException
     {
         ImmutableList.Builder<DeltaLakeTransactionLogEntry> entriesBuilder = ImmutableList.builder();
@@ -196,7 +200,7 @@ public class DeltaLakeHistoryTable
         boolean endOfHead = false;
 
         while (!endOfHead) {
-            Optional<List<DeltaLakeTransactionLogEntry>> results = getEntriesFromJson(entryNumber, transactionLogDir, fileSystem);
+            Optional<List<DeltaLakeTransactionLogEntry>> results = getEntriesFromJson(entryNumber, transactionLogDir, fileSystem, session, table);
             if (results.isPresent()) {
                 entriesBuilder.addAll(results.get());
                 version = entryNumber;

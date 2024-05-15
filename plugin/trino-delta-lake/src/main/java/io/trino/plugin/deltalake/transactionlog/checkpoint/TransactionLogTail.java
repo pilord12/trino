@@ -17,9 +17,13 @@ import com.google.common.collect.ImmutableList;
 import io.trino.filesystem.Location;
 import io.trino.filesystem.TrinoFileSystem;
 import io.trino.filesystem.TrinoInputFile;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystem;
 import io.trino.plugin.deltalake.transactionlog.DeltaLakeTransactionLogEntry;
 import io.trino.plugin.deltalake.transactionlog.MissingTransactionLogException;
 import io.trino.plugin.deltalake.transactionlog.Transaction;
+import io.trino.plugin.deltalake.util.MelodyUtils;
+import io.trino.spi.connector.ConnectorSession;
+import io.trino.spi.connector.SchemaTableName;
 
 import java.io.BufferedReader;
 import java.io.FileNotFoundException;
@@ -51,20 +55,24 @@ public class TransactionLogTail
     }
 
     public static TransactionLogTail loadNewTail(
-            TrinoFileSystem fileSystem,
+            MelodyFileSystem fileSystem,
             String tableLocation,
-            Optional<Long> startVersion)
+            Optional<Long> startVersion,
+            ConnectorSession session,
+            SchemaTableName table)
             throws IOException
     {
-        return loadNewTail(fileSystem, tableLocation, startVersion, Optional.empty());
+        return loadNewTail(fileSystem, tableLocation, startVersion, Optional.empty(), session, table);
     }
 
     // Load a section of the Transaction Log JSON entries. Optionally from a given start version (exclusive) through an end version (inclusive)
     public static TransactionLogTail loadNewTail(
-            TrinoFileSystem fileSystem,
+            MelodyFileSystem fileSystem,
             String tableLocation,
             Optional<Long> startVersion,
-            Optional<Long> endVersion)
+            Optional<Long> endVersion,
+            ConnectorSession session,
+            SchemaTableName table)
             throws IOException
     {
         ImmutableList.Builder<Transaction> entriesBuilder = ImmutableList.builder();
@@ -78,7 +86,7 @@ public class TransactionLogTail
 
         boolean endOfTail = false;
         while (!endOfTail) {
-            results = getEntriesFromJson(entryNumber, transactionLogDir, fileSystem);
+            results = getEntriesFromJson(entryNumber, transactionLogDir, fileSystem, session, table);
             if (results.isPresent()) {
                 entriesBuilder.add(new Transaction(entryNumber, results.get()));
                 version = entryNumber;
@@ -99,11 +107,11 @@ public class TransactionLogTail
         return new TransactionLogTail(entriesBuilder.build(), version);
     }
 
-    public Optional<TransactionLogTail> getUpdatedTail(TrinoFileSystem fileSystem, String tableLocation, Optional<Long> endVersion)
+    public Optional<TransactionLogTail> getUpdatedTail(MelodyFileSystem fileSystem, String tableLocation, Optional<Long> endVersion, ConnectorSession session, SchemaTableName table)
             throws IOException
     {
         checkArgument(endVersion.isEmpty() || endVersion.get() > version, "Invalid endVersion, expected higher than %s, but got %s", version, endVersion);
-        TransactionLogTail newTail = loadNewTail(fileSystem, tableLocation, Optional.of(version), endVersion);
+        TransactionLogTail newTail = loadNewTail(fileSystem, tableLocation, Optional.of(version), endVersion, session, table);
         if (newTail.version == version) {
             return Optional.empty();
         }
@@ -115,11 +123,12 @@ public class TransactionLogTail
                 newTail.version));
     }
 
-    public static Optional<List<DeltaLakeTransactionLogEntry>> getEntriesFromJson(long entryNumber, String transactionLogDir, TrinoFileSystem fileSystem)
+    public static Optional<List<DeltaLakeTransactionLogEntry>> getEntriesFromJson(long entryNumber, String transactionLogDir, MelodyFileSystem fileSystem, ConnectorSession session, SchemaTableName table)
             throws IOException
     {
         Location transactionLogFilePath = getTransactionLogJsonEntryPath(transactionLogDir, entryNumber);
-        TrinoInputFile inputFile = fileSystem.newInputFile(transactionLogFilePath);
+        String schema = table.getSchemaName();
+        TrinoInputFile inputFile = fileSystem.newInputFile(transactionLogFilePath, MelodyUtils.getOrgFromSchema(schema), MelodyUtils.getDomainFromSchema(schema), ""); // TODO token from session
         try (BufferedReader reader = new BufferedReader(
                 new InputStreamReader(inputFile.newStream(), UTF_8),
                 JSON_LOG_ENTRY_READ_BUFFER_SIZE)) {

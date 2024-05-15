@@ -93,7 +93,7 @@ public class TransactionLogAccess
     private final TypeManager typeManager;
     private final CheckpointSchemaManager checkpointSchemaManager;
     private final FileFormatDataSourceStats fileFormatDataSourceStats;
-    private final TrinoFileSystemFactory fileSystemFactory;
+    private final MelodyFileSystemFactory fileSystemFactory;
     private final ParquetReaderOptions parquetReaderOptions;
     private final boolean checkpointRowStatisticsWritingEnabled;
     private final int domainCompactionThreshold;
@@ -169,7 +169,8 @@ public class TransactionLogAccess
                                 parquetReaderOptions,
                                 checkpointRowStatisticsWritingEnabled,
                                 domainCompactionThreshold,
-                                factories));
+                                factories,
+                                session));
             }
             catch (UncheckedExecutionException | ExecutionException e) {
                 throwIfUnchecked(e.getCause());
@@ -225,7 +226,7 @@ public class TransactionLogAccess
                 .orElseThrow(() -> new TrinoException(DELTA_LAKE_INVALID_SCHEMA, "Metadata not found in transaction log for " + tableSnapshot.getTable()));
     }
 
-    public List<AddFileEntry> getActiveFiles(TableSnapshot tableSnapshot, MetadataEntry metadataEntry, ProtocolEntry protocolEntry, ConnectorSession session)
+    public List<AddFileEntry> getActiveFiles(TableSnapshot tableSnapshot, MetadataEntry metadataEntry, ProtocolEntry protocolEntry, ConnectorSession session, SchemaTableName table)
     {
         try {
             TableVersion tableVersion = new TableVersion(new TableLocation(tableSnapshot.getTable(), tableSnapshot.getTableLocation()), tableSnapshot.getVersion());
@@ -246,7 +247,9 @@ public class TransactionLogAccess
                                 oldCached.getVersion(),
                                 tableSnapshot.getVersion(),
                                 tableSnapshot,
-                                fileSystemFactory.create(session));
+                                (MelodyFileSystem) fileSystemFactory.create(session),
+                                session,
+                                table);
                         return oldCached.withUpdatesApplied(newEntries, tableSnapshot.getVersion());
                     }
                     catch (MissingTransactionLogException e) {
@@ -445,12 +448,12 @@ public class TransactionLogAccess
                 stats);
     }
 
-    public Stream<DeltaLakeTransactionLogEntry> getJsonEntries(TrinoFileSystem fileSystem, String transactionLogDir, List<Long> forVersions)
+    public Stream<DeltaLakeTransactionLogEntry> getJsonEntries(MelodyFileSystem fileSystem, String transactionLogDir, List<Long> forVersions, ConnectorSession session, SchemaTableName table)
     {
         return forVersions.stream()
                 .flatMap(version -> {
                     try {
-                        Optional<List<DeltaLakeTransactionLogEntry>> entriesFromJson = getEntriesFromJson(version, transactionLogDir, fileSystem);
+                        Optional<List<DeltaLakeTransactionLogEntry>> entriesFromJson = getEntriesFromJson(version, transactionLogDir, fileSystem, session, table);
                         //noinspection SimplifyOptionalCallChains
                         return entriesFromJson.map(List::stream)
                                 // transaction log does not exist. Might have been expired.
@@ -489,17 +492,17 @@ public class TransactionLogAccess
         return result.build();
     }
 
-    private static List<DeltaLakeTransactionLogEntry> getJsonEntries(long startVersion, long endVersion, TableSnapshot tableSnapshot, TrinoFileSystem fileSystem)
+    private static List<DeltaLakeTransactionLogEntry> getJsonEntries(long startVersion, long endVersion, TableSnapshot tableSnapshot, MelodyFileSystem fileSystem, ConnectorSession session, SchemaTableName table)
             throws IOException
     {
         Optional<Long> lastCheckpointVersion = tableSnapshot.getLastCheckpointVersion();
         if (lastCheckpointVersion.isPresent() && startVersion < lastCheckpointVersion.get()) {
             return ImmutableList.<DeltaLakeTransactionLogEntry>builder()
-                    .addAll(TransactionLogTail.loadNewTail(fileSystem, tableSnapshot.getTableLocation(), Optional.of(startVersion), lastCheckpointVersion).getFileEntries())
+                    .addAll(TransactionLogTail.loadNewTail(fileSystem, tableSnapshot.getTableLocation(), Optional.of(startVersion), lastCheckpointVersion, session, table).getFileEntries())
                     .addAll(tableSnapshot.getJsonTransactionLogEntries())
                     .build();
         }
-        return TransactionLogTail.loadNewTail(fileSystem, tableSnapshot.getTableLocation(), Optional.of(startVersion), Optional.of(endVersion)).getFileEntries();
+        return TransactionLogTail.loadNewTail(fileSystem, tableSnapshot.getTableLocation(), Optional.of(startVersion), Optional.of(endVersion), session, table).getFileEntries();
     }
 
     public static String canonicalizeColumnName(String columnName)

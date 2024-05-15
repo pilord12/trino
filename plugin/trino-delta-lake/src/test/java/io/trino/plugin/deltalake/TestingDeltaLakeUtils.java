@@ -51,7 +51,7 @@ public final class TestingDeltaLakeUtils
         TableSnapshot snapshot = transactionLogAccess.loadSnapshot(SESSION, dummyTable, tableLocation);
         MetadataEntry metadataEntry = transactionLogAccess.getMetadataEntry(snapshot, SESSION);
         ProtocolEntry protocolEntry = transactionLogAccess.getProtocolEntry(SESSION, snapshot);
-        return transactionLogAccess.getActiveFiles(snapshot, metadataEntry, protocolEntry, SESSION);
+        return transactionLogAccess.getActiveFiles(snapshot, metadataEntry, protocolEntry, SESSION, null);
     }
 
     public static void copyDirectoryContents(Path source, Path destination)

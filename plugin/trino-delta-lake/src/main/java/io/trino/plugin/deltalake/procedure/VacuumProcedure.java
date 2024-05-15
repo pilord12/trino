@@ -30,6 +30,8 @@ import io.trino.plugin.deltalake.DeltaLakeMetadata;
 import io.trino.plugin.deltalake.DeltaLakeMetadataFactory;
 import io.trino.plugin.deltalake.DeltaLakeSessionProperties;
 import io.trino.plugin.deltalake.DeltaLakeTableHandle;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystem;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystemFactory;
 import io.trino.plugin.deltalake.transactionlog.AddFileEntry;
 import io.trino.plugin.deltalake.transactionlog.DeltaLakeTransactionLogEntry;
 import io.trino.plugin.deltalake.transactionlog.ProtocolEntry;
@@ -89,14 +91,14 @@ public class VacuumProcedure
     }
 
     private final CatalogName catalogName;
-    private final TrinoFileSystemFactory fileSystemFactory;
+    private final MelodyFileSystemFactory fileSystemFactory;
     private final DeltaLakeMetadataFactory metadataFactory;
     private final TransactionLogAccess transactionLogAccess;
 
     @Inject
     public VacuumProcedure(
             CatalogName catalogName,
-            TrinoFileSystemFactory fileSystemFactory,
+            MelodyFileSystemFactory fileSystemFactory,
             DeltaLakeMetadataFactory metadataFactory,
             TransactionLogAccess transactionLogAccess)
     {
@@ -188,7 +190,7 @@ public class VacuumProcedure
 
         String tableLocation = tableSnapshot.getTableLocation();
         String transactionLogDir = getTransactionLogDir(tableLocation);
-        TrinoFileSystem fileSystem = fileSystemFactory.create(session);
+        MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
         String commonPathPrefix = tableLocation.endsWith("/") ? tableLocation : tableLocation + "/";
         String queryId = session.getQueryId();
 
@@ -196,7 +198,7 @@ public class VacuumProcedure
         // Any remaining file are not live, and not needed to read any "recent" snapshot.
         List<Long> recentVersions = transactionLogAccess.getPastTableVersions(fileSystem, transactionLogDir, threshold, tableSnapshot.getVersion());
         Set<String> retainedPaths = Stream.concat(
-                        transactionLogAccess.getActiveFiles(tableSnapshot, handle.getMetadataEntry(), handle.getProtocolEntry(), session).stream()
+                        transactionLogAccess.getActiveFiles(tableSnapshot, handle.getMetadataEntry(), handle.getProtocolEntry(), session, tableName).stream()
                                 .map(AddFileEntry::getPath),
                         transactionLogAccess.getJsonEntries(
                                         fileSystem,
@@ -205,7 +207,9 @@ public class VacuumProcedure
                                         // active files, but still needed to read a "recent" snapshot
                                         recentVersions.stream().sorted(naturalOrder())
                                                 .skip(1)
-                                                .collect(toImmutableList()))
+                                                .collect(toImmutableList()),
+                                        session,
+                                        tableName)
                                 .map(DeltaLakeTransactionLogEntry::getRemove)
                                 .filter(Objects::nonNull)
                                 .map(RemoveFileEntry::getPath))

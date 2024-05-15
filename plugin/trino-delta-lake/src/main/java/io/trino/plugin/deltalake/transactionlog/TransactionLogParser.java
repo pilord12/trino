@@ -253,7 +253,9 @@ public final class TransactionLogParser
             throws JsonParseException, JsonMappingException
     {
         Location checkpointPath = Location.of(getTransactionLogDir(tableLocation)).appendPath(LAST_CHECKPOINT_FILENAME);
-        TrinoInputFile inputFile = fileSystem.newInputFile(checkpointPath);
+        String org = table.getSchemaName().split("/")[0];
+        String domain = table.getSchemaName().split("/")[1];
+        TrinoInputFile inputFile = fileSystem.newInputFile(checkpointPath, org, domain, ""); // TODO token from session
         try (InputStream lastCheckpointInput = inputFile.newStream()) {
             // Note: there apparently is 8K buffering applied and _last_checkpoint should be much smaller.
             return Optional.of(JsonUtils.parseJson(OBJECT_MAPPER, lastCheckpointInput, LastCheckpoint.class));
