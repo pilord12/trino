@@ -56,6 +56,8 @@ import static java.lang.String.format;
 import static java.lang.invoke.MethodHandles.lookup;
 import static java.util.Objects.requireNonNull;
 
+// TODO delete this?
+
 public class RegisterTableProcedure
         implements Provider<Procedure>
 {

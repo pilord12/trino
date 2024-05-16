@@ -37,6 +37,8 @@ import static io.trino.spi.type.VarcharType.VARCHAR;
 import static java.lang.invoke.MethodHandles.lookup;
 import static java.util.Objects.requireNonNull;
 
+// TODO delete this?
+
 public class UnregisterTableProcedure
         implements Provider<Procedure>
 {

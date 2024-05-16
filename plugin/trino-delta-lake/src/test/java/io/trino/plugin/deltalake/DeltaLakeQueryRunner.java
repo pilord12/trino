@@ -134,8 +134,6 @@ public final class DeltaLakeQueryRunner
                 .setDeltaProperties(deltaProperties)
                 .build();
 
-        queryRunner.execute("CREATE SCHEMA IF NOT EXISTS tpch");
-
         return queryRunner;
     }
 
@@ -260,7 +258,6 @@ public final class DeltaLakeQueryRunner
 //                            "fs.native-s3.enabled", "true",
                             "hive.metastore.catalog.dir", metastoreDirectory.toUri().toString()));
 
-            copyTpchTables(queryRunner, "tpch", TINY_SCHEMA_NAME, createSession(), TpchTable.getTables());
             log.info("Data directory is: %s", metastoreDirectory);
 
             Thread.sleep(10);

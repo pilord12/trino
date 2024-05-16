@@ -577,7 +577,7 @@ public class DeltaLakeMetadata
                 tableName.getSchemaName(),
                 tableName.getTableName().substring(0, metadataMarkerIndex));
 
-        Optional<Table> table = metastore.getRawMetastoreTable(tableNameBase.getSchemaName(), tableNameBase.getTableName());
+        Optional<Table> table = metastore.getRawMetastoreTable(tableNameBase.getSchemaName(), tableNameBase.getTableName()); // TODO why metastore?
         if (table.isEmpty() || VIRTUAL_VIEW.name().equals(table.get().getTableType())) {
             return Optional.empty();
         }
@@ -871,7 +871,7 @@ public class DeltaLakeMetadata
                             return Stream.of(TableColumnsMetadata.forRedirectedTable(table));
                         }
 
-                        Optional<DeltaMetastoreTable> metastoreTable = metastore.getTable(table.getSchemaName(), table.getTableName());
+                        Optional<DeltaMetastoreTable> metastoreTable = metastore.getTable(table.getSchemaName(), table.getTableName()); // TODO why metastore?
                         if (metastoreTable.isEmpty()) {
                             // this may happen when table is being deleted concurrently,
                             return Stream.of();
@@ -926,204 +926,19 @@ public class DeltaLakeMetadata
     @Override
     public void createSchema(ConnectorSession session, String schemaName, Map<String, Object> properties, TrinoPrincipal owner)
     {
-        Optional<String> location = DeltaLakeSchemaProperties.getLocation(properties).map(locationUri -> {
-            try {
-                fileSystemFactory.create(session).directoryExists(Location.of(locationUri));
-            }
-            catch (IOException | IllegalArgumentException e) {
-                throw new TrinoException(INVALID_SCHEMA_PROPERTY, "Invalid location URI: " + locationUri, e);
-            }
-            return locationUri;
-        });
-
-        String queryId = session.getQueryId();
-
-        Database database = Database.builder()
-                .setDatabaseName(schemaName)
-                .setLocation(location)
-                .setOwnerType(Optional.of(owner.getType()))
-                .setOwnerName(Optional.of(owner.getName()))
-                .setParameters(ImmutableMap.of(PRESTO_QUERY_ID_NAME, queryId))
-                .build();
-
-        // Ensure the database has queryId set. This is relied on for exception handling
-        verify(
-                getQueryId(database).orElseThrow(() -> new IllegalArgumentException("Query id is not present")).equals(queryId),
-                "Database '%s' does not have correct query id set",
-                database.getDatabaseName());
-
-        try {
-            metastore.createDatabase(database);
-        }
-        catch (SchemaAlreadyExistsException e) {
-            // Ignore SchemaAlreadyExistsException when database looks like created by us.
-            // This may happen when an actually successful metastore create call is retried
-            // e.g. because of a timeout on our side.
-            Optional<Database> existingDatabase = metastore.getDatabase(schemaName);
-            if (existingDatabase.isEmpty() || !isCreatedBy(existingDatabase.get(), queryId)) {
-                throw e;
-            }
-        }
+        throw new UnsupportedOperationException("Melody schema creation must go through the Asset Manager");
     }
 
     @Override
     public void dropSchema(ConnectorSession session, String schemaName, boolean cascade)
     {
-        if (cascade) {
-            for (SchemaTableName viewName : listViews(session, Optional.of(schemaName))) {
-                try {
-                    dropView(session, viewName);
-                }
-                catch (ViewNotFoundException e) {
-                    LOG.debug("View disappeared during DROP SCHEMA CASCADE: %s", viewName);
-                }
-            }
-            for (SchemaTableName tableName : listTables(session, Optional.of(schemaName))) {
-                ConnectorTableHandle table = getTableHandle(session, tableName, Optional.empty(), Optional.empty());
-                if (table == null) {
-                    LOG.debug("Table disappeared during DROP SCHEMA CASCADE: %s", tableName);
-                    continue;
-                }
-                try {
-                    dropTable(session, table);
-                }
-                catch (TableNotFoundException e) {
-                    LOG.debug("Table disappeared during DROP SCHEMA CASCADE: %s", tableName);
-                }
-            }
-        }
-
-        Optional<String> location = metastore.getDatabase(schemaName)
-                .orElseThrow(() -> new SchemaNotFoundException(schemaName))
-                .getLocation();
-
-        // If we see files in the schema location, don't delete it.
-        // If we see no files or can't see the location at all, use fallback.
-        boolean deleteData = location.map(path -> {
-            try {
-                return !fileSystemFactory.create(session).listFiles(Location.of(path)).hasNext();
-            }
-            catch (IOException | RuntimeException e) {
-                LOG.warn(e, "Could not check schema directory '%s'", path);
-                return deleteSchemaLocationsFallback;
-            }
-        }).orElse(deleteSchemaLocationsFallback);
-
-        metastore.dropDatabase(schemaName, deleteData);
+        throw new UnsupportedOperationException("Melody schema deletion must go through the Asset Manager");
     }
 
     @Override
     public void createTable(ConnectorSession session, ConnectorTableMetadata tableMetadata, boolean ignoreExisting)
     {
-        SchemaTableName schemaTableName = tableMetadata.getTable();
-        String schemaName = schemaTableName.getSchemaName();
-        String tableName = schemaTableName.getTableName();
-
-        Database schema = metastore.getDatabase(schemaName).orElseThrow(() -> new SchemaNotFoundException(schemaName));
-
-        boolean external = true;
-        String location = getLocation(tableMetadata.getProperties());
-        if (location == null) {
-            location = getTableLocation(schema, tableName);
-            checkPathContainsNoFiles(session, Location.of(location));
-            external = false;
-        }
-        Location deltaLogDirectory = Location.of(getTransactionLogDir(location));
-        Optional<Long> checkpointInterval = getCheckpointInterval(tableMetadata.getProperties());
-        Optional<Boolean> changeDataFeedEnabled = getChangeDataFeedEnabled(tableMetadata.getProperties());
-        ColumnMappingMode columnMappingMode = DeltaLakeTableProperties.getColumnMappingMode(tableMetadata.getProperties());
-        AtomicInteger fieldId = new AtomicInteger();
-
-        try {
-            TrinoFileSystem fileSystem = fileSystemFactory.create(session);
-            if (!fileSystem.listFiles(deltaLogDirectory).hasNext()) {
-                validateTableColumns(tableMetadata);
-
-                List<String> partitionColumns = getPartitionedBy(tableMetadata.getProperties());
-                ImmutableList.Builder<String> columnNames = ImmutableList.builderWithExpectedSize(tableMetadata.getColumns().size());
-                ImmutableMap.Builder<String, Object> columnTypes = ImmutableMap.builderWithExpectedSize(tableMetadata.getColumns().size());
-                ImmutableMap.Builder<String, Map<String, Object>> columnsMetadata = ImmutableMap.builderWithExpectedSize(tableMetadata.getColumns().size());
-                boolean containsTimestampType = false;
-                for (ColumnMetadata column : tableMetadata.getColumns()) {
-                    columnNames.add(column.getName());
-                    columnTypes.put(column.getName(), serializeColumnType(columnMappingMode, fieldId, column.getType()));
-                    columnsMetadata.put(column.getName(), generateColumnMetadata(columnMappingMode, fieldId));
-                    if (!containsTimestampType) {
-                        containsTimestampType = containsTimestampType(column.getType());
-                    }
-                }
-                Map<String, String> columnComments = tableMetadata.getColumns().stream()
-                        .filter(column -> column.getComment() != null)
-                        .collect(toImmutableMap(ColumnMetadata::getName, ColumnMetadata::getComment));
-                Map<String, Boolean> columnsNullability = tableMetadata.getColumns().stream()
-                        .collect(toImmutableMap(ColumnMetadata::getName, ColumnMetadata::isNullable));
-                OptionalInt maxFieldId = OptionalInt.empty();
-                if (columnMappingMode == ID || columnMappingMode == NAME) {
-                    maxFieldId = OptionalInt.of(fieldId.get());
-                }
-
-                TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriterWithoutTransactionIsolation(session, location, schemaTableName);
-                appendTableEntries(
-                        0,
-                        transactionLogWriter,
-                        randomUUID().toString(),
-                        columnNames.build(),
-                        partitionColumns,
-                        columnTypes.buildOrThrow(),
-                        columnComments,
-                        columnsNullability,
-                        columnsMetadata.buildOrThrow(),
-                        configurationForNewTable(checkpointInterval, changeDataFeedEnabled, columnMappingMode, maxFieldId),
-                        CREATE_TABLE_OPERATION,
-                        session,
-                        tableMetadata.getComment(),
-                        protocolEntryForNewTable(containsTimestampType, tableMetadata.getProperties()));
-
-                setRollback(() -> deleteRecursivelyIfExists(fileSystem, deltaLogDirectory));
-                transactionLogWriter.flush();
-            }
-            else {
-                if (!isLegacyCreateTableWithExistingLocationEnabled(session)) {
-                    throw new TrinoException(
-                            NOT_SUPPORTED,
-                            "Using CREATE TABLE with an existing table content is deprecated, instead use the system.register_table() procedure." +
-                                    " The CREATE TABLE syntax can be temporarily re-enabled using the 'delta.legacy-create-table-with-existing-location.enabled' config property" +
-                                    " or 'legacy_create_table_with_existing_location_enabled' session property.");
-                }
-            }
-        }
-        catch (IOException e) {
-            throw new TrinoException(DELTA_LAKE_BAD_WRITE, "Unable to access file system for: " + location, e);
-        }
-
-        Table table = buildTable(session, schemaTableName, location, external);
-
-        // Ensure the table has queryId set. This is relied on for exception handling
-        String queryId = session.getQueryId();
-        verify(
-                getQueryId(table).orElseThrow(() -> new IllegalArgumentException("Query id is not present")).equals(queryId),
-                "Table '%s' does not have correct query id set",
-                table);
-
-        PrincipalPrivileges principalPrivileges = buildInitialPrivilegeSet(table.getOwner().orElseThrow());
-        // As a precaution, clear the caches
-        statisticsAccess.invalidateCache(schemaTableName, Optional.of(location));
-        transactionLogAccess.invalidateCache(schemaTableName, Optional.of(location));
-        try {
-            metastore.createTable(
-                    session,
-                    table,
-                    principalPrivileges);
-        }
-        catch (TableAlreadyExistsException e) {
-            // Ignore TableAlreadyExistsException when table looks like created by us.
-            // This may happen when an actually successful metastore create call is retried
-            // e.g. because of a timeout on our side.
-            Optional<Table> existingTable = metastore.getRawMetastoreTable(schemaName, tableName);
-            if (existingTable.isEmpty() || !isCreatedBy(existingTable.get(), queryId)) {
-                throw e;
-            }
-        }
+        throw new UnsupportedOperationException("Melody table creation must go through the Asset Manager");
     }
 
     public static Table buildTable(ConnectorSession session, SchemaTableName schemaTableName, String location, boolean isExternal)
@@ -1171,91 +986,7 @@ public class DeltaLakeMetadata
     @Override
     public DeltaLakeOutputTableHandle beginCreateTable(ConnectorSession session, ConnectorTableMetadata tableMetadata, Optional<ConnectorTableLayout> layout, RetryMode retryMode)
     {
-        validateTableColumns(tableMetadata);
-
-        SchemaTableName schemaTableName = tableMetadata.getTable();
-        String schemaName = schemaTableName.getSchemaName();
-        String tableName = schemaTableName.getTableName();
-
-        Database schema = metastore.getDatabase(schemaName).orElseThrow(() -> new SchemaNotFoundException(schemaName));
-        List<String> partitionedBy = getPartitionedBy(tableMetadata.getProperties());
-
-        boolean external = true;
-        String location = getLocation(tableMetadata.getProperties());
-        if (location == null) {
-            location = getTableLocation(schema, tableName);
-            external = false;
-        }
-
-        ColumnMappingMode columnMappingMode = DeltaLakeTableProperties.getColumnMappingMode(tableMetadata.getProperties());
-        AtomicInteger fieldId = new AtomicInteger();
-
-        Location finalLocation = Location.of(location);
-        checkPathContainsNoFiles(session, finalLocation);
-        setRollback(() -> deleteRecursivelyIfExists(fileSystemFactory.create(session), finalLocation));
-
-        boolean usePhysicalName = columnMappingMode == ID || columnMappingMode == NAME;
-        boolean containsTimestampType = false;
-        int columnSize = tableMetadata.getColumns().size();
-        ImmutableList.Builder<String> columnNames = ImmutableList.builderWithExpectedSize(columnSize);
-        ImmutableMap.Builder<String, Object> columnTypes = ImmutableMap.builderWithExpectedSize(columnSize);
-        ImmutableMap.Builder<String, Boolean> columnNullabilities = ImmutableMap.builderWithExpectedSize(columnSize);
-        ImmutableMap.Builder<String, Map<String, Object>> columnsMetadata = ImmutableMap.builderWithExpectedSize(columnSize);
-        ImmutableList.Builder<DeltaLakeColumnHandle> columnHandles = ImmutableList.builderWithExpectedSize(columnSize);
-        for (ColumnMetadata column : tableMetadata.getColumns()) {
-            columnNames.add(column.getName());
-            columnNullabilities.put(column.getName(), column.isNullable());
-            containsTimestampType |= containsTimestampType(column.getType());
-
-            Object serializedType = serializeColumnType(columnMappingMode, fieldId, column.getType());
-            Type physicalType = deserializeType(typeManager, serializedType, usePhysicalName);
-            columnTypes.put(column.getName(), serializedType);
-
-            OptionalInt id;
-            String physicalName;
-            Map<String, Object> columnMetadata;
-            switch (columnMappingMode) {
-                case NONE -> {
-                    id = OptionalInt.empty();
-                    physicalName = column.getName();
-                    columnMetadata = ImmutableMap.of();
-                }
-                case ID, NAME -> {
-                    columnMetadata = generateColumnMetadata(columnMappingMode, fieldId);
-                    id = OptionalInt.of(fieldId.get());
-                    physicalName = (String) columnMetadata.get(COLUMN_MAPPING_PHYSICAL_NAME_CONFIGURATION_KEY);
-                }
-                default -> throw new IllegalArgumentException("Unexpected column mapping mode: " + columnMappingMode);
-            }
-            columnHandles.add(toColumnHandle(column.getName(), column.getType(), id, physicalName, physicalType, partitionedBy));
-            columnsMetadata.put(column.getName(), columnMetadata);
-        }
-
-        String schemaString = serializeSchemaAsJson(
-                columnNames.build(),
-                columnTypes.buildOrThrow(),
-                ImmutableMap.of(),
-                columnNullabilities.buildOrThrow(),
-                columnsMetadata.buildOrThrow());
-
-        OptionalInt maxFieldId = OptionalInt.empty();
-        if (columnMappingMode == ID || columnMappingMode == NAME) {
-            maxFieldId = OptionalInt.of(fieldId.get());
-        }
-
-        return new DeltaLakeOutputTableHandle(
-                schemaName,
-                tableName,
-                columnHandles.build(),
-                location,
-                getCheckpointInterval(tableMetadata.getProperties()),
-                external,
-                tableMetadata.getComment(),
-                getChangeDataFeedEnabled(tableMetadata.getProperties()),
-                schemaString,
-                columnMappingMode,
-                maxFieldId,
-                protocolEntryForNewTable(containsTimestampType, tableMetadata.getProperties()));
+        throw new UnsupportedOperationException("Melody table creation must go through the Asset Manager");
     }
 
     private Optional<String> getSchemaLocation(Database database)
@@ -1366,104 +1097,7 @@ public class DeltaLakeMetadata
             Collection<Slice> fragments,
             Collection<ComputedStatistics> computedStatistics)
     {
-        DeltaLakeOutputTableHandle handle = (DeltaLakeOutputTableHandle) tableHandle;
-
-        String schemaName = handle.getSchemaName();
-        String tableName = handle.getTableName();
-        String location = handle.getLocation();
-
-        List<DataFileInfo> dataFileInfos = fragments.stream()
-                .map(Slice::getBytes)
-                .map(dataFileInfoCodec::fromJson)
-                .collect(toImmutableList());
-
-        SchemaTableName schemaTableName = schemaTableName(schemaName, tableName);
-        Table table = buildTable(session, schemaTableName, location, handle.isExternal());
-        // Ensure the table has queryId set. This is relied on for exception handling
-        String queryId = session.getQueryId();
-        verify(
-                getQueryId(table).orElseThrow(() -> new IllegalArgumentException("Query id is not present")).equals(queryId),
-                "Table '%s' does not have correct query id set",
-                table);
-
-        ColumnMappingMode columnMappingMode = handle.getColumnMappingMode();
-        String schemaString = handle.getSchemaString();
-        List<String> columnNames = handle.getInputColumns().stream().map(DeltaLakeColumnHandle::getBaseColumnName).collect(toImmutableList());
-        List<String> physicalPartitionNames = handle.getInputColumns().stream()
-                .filter(column -> column.getColumnType() == PARTITION_KEY)
-                .map(DeltaLakeColumnHandle::getBasePhysicalColumnName)
-                .collect(toImmutableList());
-        try {
-            // For CTAS there is no risk of multiple writers racing. Using writer without transaction isolation so we are not limiting support for CTAS to
-            // filesystems for which we have proper implementations of TransactionLogSynchronizers.
-            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriterWithoutTransactionIsolation(session, handle.getLocation(), schemaTableName);
-
-            appendTableEntries(
-                    0,
-                    transactionLogWriter,
-                    randomUUID().toString(),
-                    schemaString,
-                    handle.getPartitionedBy(),
-                    configurationForNewTable(handle.getCheckpointInterval(), handle.getChangeDataFeedEnabled(), columnMappingMode, handle.getMaxColumnId()),
-                    CREATE_TABLE_AS_OPERATION,
-                    session,
-                    handle.getComment(),
-                    handle.getProtocolEntry());
-            appendAddFileEntries(transactionLogWriter, dataFileInfos, physicalPartitionNames, columnNames, true);
-            transactionLogWriter.flush();
-
-            if (isCollectExtendedStatisticsColumnStatisticsOnWrite(session) && !computedStatistics.isEmpty()) {
-                Optional<Instant> maxFileModificationTime = dataFileInfos.stream()
-                        .map(DataFileInfo::getCreationTime)
-                        .max(Long::compare)
-                        .map(Instant::ofEpochMilli);
-                Map<String, String> physicalColumnMapping = DeltaLakeSchemaSupport.getColumnMetadata(schemaString, typeManager, columnMappingMode).stream()
-                        .map(e -> Map.entry(e.getName(), e.getPhysicalName()))
-                        .collect(toImmutableMap(Entry::getKey, Entry::getValue));
-
-                updateTableStatistics(
-                        session,
-                        Optional.empty(),
-                        schemaTableName,
-                        location,
-                        maxFileModificationTime,
-                        computedStatistics,
-                        columnNames,
-                        Optional.of(physicalColumnMapping));
-            }
-
-            PrincipalPrivileges principalPrivileges = buildInitialPrivilegeSet(table.getOwner().orElseThrow());
-
-            // As a precaution, clear the caches
-            statisticsAccess.invalidateCache(schemaTableName, Optional.of(location));
-            transactionLogAccess.invalidateCache(schemaTableName, Optional.of(location));
-            try {
-                metastore.createTable(session, table, principalPrivileges);
-            }
-            catch (TableAlreadyExistsException e) {
-                // Ignore TableAlreadyExistsException when table looks like created by us.
-                // This may happen when an actually successful metastore create call is retried
-                // e.g. because of a timeout on our side.
-                Optional<Table> existingTable = metastore.getRawMetastoreTable(schemaName, tableName);
-                if (existingTable.isEmpty() || !isCreatedBy(existingTable.get(), queryId)) {
-                    throw e;
-                }
-            }
-        }
-        catch (Exception e) {
-            // Remove the transaction log entry if the table creation fails
-            try {
-                Location transactionLogDir = Location.of(getTransactionLogDir(location));
-                fileSystemFactory.create(session).deleteDirectory(transactionLogDir);
-            }
-            catch (IOException ioException) {
-                // Nothing to do, the IOException is probably the same reason why the initial write failed
-                LOG.error(ioException, "Transaction log cleanup failed during CREATE TABLE rollback");
-            }
-            throw new TrinoException(DELTA_LAKE_BAD_WRITE, "Failed to write Delta Lake transaction log entry", e);
-        }
-
-        return Optional.empty();
+        throw new UnsupportedOperationException("Melody table creation must go through the Asset Manager");
     }
 
     private static boolean isCreatedBy(Database database, String queryId)
@@ -1563,242 +1197,31 @@ public class DeltaLakeMetadata
     @Override
     public void setViewComment(ConnectorSession session, SchemaTableName viewName, Optional<String> comment)
     {
-        throw new UnsupportedOperationException("Views are not supported");
+        throw new UnsupportedOperationException("Views are not supported in Melody");
     }
 
     @Override
     public void setViewColumnComment(ConnectorSession session, SchemaTableName viewName, String columnName, Optional<String> comment)
     {
-        throw new UnsupportedOperationException("Views are not supported");
+        throw new UnsupportedOperationException("Views are not supported in Melody");
     }
 
     @Override
     public void addColumn(ConnectorSession session, ConnectorTableHandle tableHandle, ColumnMetadata newColumnMetadata)
     {
-        DeltaLakeTableHandle handle = checkValidTableHandle(tableHandle);
-        ProtocolEntry protocolEntry = handle.getProtocolEntry();
-        checkSupportedWriterVersion(handle);
-        ColumnMappingMode columnMappingMode = getColumnMappingMode(handle.getMetadataEntry(), protocolEntry);
-        if (changeDataFeedEnabled(handle.getMetadataEntry(), protocolEntry).orElse(false) && CHANGE_DATA_FEED_COLUMN_NAMES.contains(newColumnMetadata.getName())) {
-            throw new TrinoException(NOT_SUPPORTED, "Column name %s is forbidden when change data feed is enabled".formatted(newColumnMetadata.getName()));
-        }
-        checkUnsupportedWriterFeatures(protocolEntry);
-
-        if (!newColumnMetadata.isNullable() && !transactionLogAccess.getActiveFiles(getSnapshot(session, handle), handle.getMetadataEntry(), handle.getProtocolEntry(), session, handle.getSchemaTableName()).isEmpty()) {
-            throw new TrinoException(DELTA_LAKE_BAD_WRITE, format("Unable to add NOT NULL column '%s' for non-empty table: %s.%s", newColumnMetadata.getName(), handle.getSchemaName(), handle.getTableName()));
-        }
-
-        try {
-            long commitVersion = handle.getReadVersion() + 1;
-
-            AtomicInteger maxColumnId = switch (columnMappingMode) {
-                case NONE -> new AtomicInteger();
-                case ID, NAME -> new AtomicInteger(getMaxColumnId(handle.getMetadataEntry()));
-                default -> throw new IllegalArgumentException("Unexpected column mapping mode: " + columnMappingMode);
-            };
-
-            List<String> columnNames = ImmutableList.<String>builder()
-                    .addAll(getExactColumnNames(handle.getMetadataEntry()))
-                    .add(newColumnMetadata.getName())
-                    .build();
-            ImmutableMap.Builder<String, String> columnComments = ImmutableMap.builder();
-            columnComments.putAll(getColumnComments(handle.getMetadataEntry()));
-            if (newColumnMetadata.getComment() != null) {
-                columnComments.put(newColumnMetadata.getName(), newColumnMetadata.getComment());
-            }
-            ImmutableMap.Builder<String, Boolean> columnsNullability = ImmutableMap.builder();
-            columnsNullability.putAll(getColumnsNullability(handle.getMetadataEntry()));
-            columnsNullability.put(newColumnMetadata.getName(), newColumnMetadata.isNullable());
-            Map<String, Object> columnTypes = ImmutableMap.<String, Object>builderWithExpectedSize(columnNames.size())
-                    .putAll(getColumnTypes(handle.getMetadataEntry()))
-                    .put(Map.entry(newColumnMetadata.getName(), serializeColumnType(columnMappingMode, maxColumnId, newColumnMetadata.getType())))
-                    .buildOrThrow();
-
-            ImmutableMap.Builder<String, Map<String, Object>> columnMetadata = ImmutableMap.builder();
-            columnMetadata.putAll(getColumnsMetadata(handle.getMetadataEntry()));
-            columnMetadata.put(newColumnMetadata.getName(), generateColumnMetadata(columnMappingMode, maxColumnId));
-
-            Map<String, String> configuration = new HashMap<>(handle.getMetadataEntry().getConfiguration());
-            if (columnMappingMode == ID || columnMappingMode == NAME) {
-                checkArgument(maxColumnId.get() > 0, "maxColumnId must be larger than 0: %s", maxColumnId);
-                configuration.put(MAX_COLUMN_ID_CONFIGURATION_KEY, String.valueOf(maxColumnId.get()));
-            }
-
-            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, handle.getLocation(), handle.getSchemaTableName());
-            appendTableEntries(
-                    commitVersion,
-                    transactionLogWriter,
-                    handle.getMetadataEntry().getId(),
-                    serializeSchemaAsJson(
-                            columnNames,
-                            columnTypes,
-                            columnComments.buildOrThrow(),
-                            columnsNullability.buildOrThrow(),
-                            columnMetadata.buildOrThrow()),
-                    handle.getMetadataEntry().getOriginalPartitionColumns(),
-                    configuration,
-                    ADD_COLUMN_OPERATION,
-                    session,
-                    Optional.ofNullable(handle.getMetadataEntry().getDescription()),
-                    protocolEntry);
-            transactionLogWriter.flush();
-        }
-        catch (Exception e) {
-            throw new TrinoException(DELTA_LAKE_BAD_WRITE, format("Unable to add '%s' column for: %s.%s", newColumnMetadata.getName(), handle.getSchemaName(), handle.getTableName()), e);
-        }
+        throw new UnsupportedOperationException("Melody table schema modifications (column addition) must go through the Asset Manager");
     }
 
     @Override
     public void dropColumn(ConnectorSession session, ConnectorTableHandle tableHandle, ColumnHandle columnHandle)
     {
-        DeltaLakeTableHandle table = (DeltaLakeTableHandle) tableHandle;
-        DeltaLakeColumnHandle deltaLakeColumn = (DeltaLakeColumnHandle) columnHandle;
-        verify(deltaLakeColumn.isBaseColumn(), "Unexpected dereference: %s", deltaLakeColumn);
-        String dropColumnName = deltaLakeColumn.getBaseColumnName();
-        MetadataEntry metadataEntry = table.getMetadataEntry();
-        ProtocolEntry protocolEntry = table.getProtocolEntry();
-        checkUnsupportedWriterFeatures(protocolEntry);
-
-        checkSupportedWriterVersion(table);
-        ColumnMappingMode columnMappingMode = getColumnMappingMode(metadataEntry, protocolEntry);
-        if (columnMappingMode != ColumnMappingMode.NAME && columnMappingMode != ColumnMappingMode.ID) {
-            throw new TrinoException(NOT_SUPPORTED, "Cannot drop column from table using column mapping mode " + columnMappingMode);
-        }
-
-        long commitVersion = table.getReadVersion() + 1;
-        List<String> partitionColumns = metadataEntry.getOriginalPartitionColumns();
-        if (partitionColumns.contains(dropColumnName)) {
-            throw new TrinoException(NOT_SUPPORTED, "Cannot drop partition column: " + dropColumnName);
-        }
-
-        // Use equalsIgnoreCase because the remote column name can contain uppercase characters
-        // Creating a table with ambiguous names (e.g. "a" and "A") is disallowed, so this should be safe
-        List<DeltaLakeColumnMetadata> columns = extractSchema(metadataEntry, protocolEntry, typeManager);
-        List<String> columnNames = getExactColumnNames(metadataEntry).stream()
-                .filter(name -> !name.equalsIgnoreCase(dropColumnName))
-                .collect(toImmutableList());
-        if (columns.size() == columnNames.size()) {
-            throw new ColumnNotFoundException(table.schemaTableName(), dropColumnName);
-        }
-        if (columnNames.size() == partitionColumns.size()) {
-            throw new TrinoException(NOT_SUPPORTED, "Dropping the last non-partition column is unsupported");
-        }
-        Map<String, String> lowerCaseToExactColumnNames = getExactColumnNames(metadataEntry).stream()
-                .collect(toImmutableMap(name -> name.toLowerCase(ENGLISH), name -> name));
-        Map<String, String> physicalColumnNameMapping = columns.stream()
-                .collect(toImmutableMap(DeltaLakeColumnMetadata::getName, DeltaLakeColumnMetadata::getPhysicalName));
-
-        Map<String, Object> columnTypes = filterKeys(getColumnTypes(metadataEntry), name -> !name.equalsIgnoreCase(dropColumnName));
-        Map<String, String> columnComments = filterKeys(getColumnComments(metadataEntry), name -> !name.equalsIgnoreCase(dropColumnName));
-        Map<String, Boolean> columnsNullability = filterKeys(getColumnsNullability(metadataEntry), name -> !name.equalsIgnoreCase(dropColumnName));
-        Map<String, Map<String, Object>> columnMetadata = filterKeys(getColumnsMetadata(metadataEntry), name -> !name.equalsIgnoreCase(dropColumnName));
-        try {
-            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, table.getLocation(), table.getSchemaTableName());
-            appendTableEntries(
-                    commitVersion,
-                    transactionLogWriter,
-                    metadataEntry.getId(),
-                    columnNames,
-                    partitionColumns,
-                    columnTypes,
-                    columnComments,
-                    columnsNullability,
-                    columnMetadata,
-                    metadataEntry.getConfiguration(),
-                    DROP_COLUMN_OPERATION,
-                    session,
-                    Optional.ofNullable(metadataEntry.getDescription()),
-                    protocolEntry);
-            transactionLogWriter.flush();
-        }
-        catch (Exception e) {
-            throw new TrinoException(DELTA_LAKE_BAD_WRITE, format("Unable to drop '%s' column from: %s.%s", dropColumnName, table.getSchemaName(), table.getTableName()), e);
-        }
-
-        try {
-            statisticsAccess.readExtendedStatistics(session, table.getSchemaTableName(), table.getLocation()).ifPresent(existingStatistics -> {
-                ExtendedStatistics statistics = new ExtendedStatistics(
-                        existingStatistics.getAlreadyAnalyzedModifiedTimeMax(),
-                        existingStatistics.getColumnStatistics().entrySet().stream()
-                                .filter(stats -> !stats.getKey().equalsIgnoreCase(toPhysicalColumnName(dropColumnName, lowerCaseToExactColumnNames, Optional.of(physicalColumnNameMapping))))
-                                .collect(toImmutableMap(Entry::getKey, Entry::getValue)),
-                        existingStatistics.getAnalyzedColumns()
-                                .map(analyzedColumns -> analyzedColumns.stream().filter(column -> !column.equalsIgnoreCase(dropColumnName)).collect(toImmutableSet())));
-                statisticsAccess.updateExtendedStatistics(session, table.getSchemaTableName(), table.getLocation(), statistics);
-            });
-        }
-        catch (Exception e) {
-            LOG.warn(e, "Failed to update extended statistics when dropping %s column from %s table", dropColumnName, table.schemaTableName());
-        }
+        throw new UnsupportedOperationException("Melody table schema modifications (column deletion) must go through the Asset Manager");
     }
 
     @Override
     public void renameColumn(ConnectorSession session, ConnectorTableHandle tableHandle, ColumnHandle columnHandle, String newColumnName)
     {
-        DeltaLakeTableHandle table = (DeltaLakeTableHandle) tableHandle;
-        DeltaLakeColumnHandle deltaLakeColumn = (DeltaLakeColumnHandle) columnHandle;
-        verify(deltaLakeColumn.isBaseColumn(), "Unexpected dereference: %s", deltaLakeColumn);
-        String sourceColumnName = deltaLakeColumn.getBaseColumnName();
-        ProtocolEntry protocolEntry = table.getProtocolEntry();
-        checkUnsupportedWriterFeatures(protocolEntry);
-
-        checkSupportedWriterVersion(table);
-        if (changeDataFeedEnabled(table.getMetadataEntry(), protocolEntry).orElse(false)) {
-            throw new TrinoException(NOT_SUPPORTED, "Cannot rename column when change data feed is enabled");
-        }
-
-        MetadataEntry metadataEntry = table.getMetadataEntry();
-        ColumnMappingMode columnMappingMode = getColumnMappingMode(metadataEntry, protocolEntry);
-        if (columnMappingMode != ColumnMappingMode.NAME && columnMappingMode != ColumnMappingMode.ID) {
-            throw new TrinoException(NOT_SUPPORTED, "Cannot rename column in table using column mapping mode " + columnMappingMode);
-        }
-
-        long commitVersion = table.getReadVersion() + 1;
-
-        // Use equalsIgnoreCase because the remote column name can contain uppercase characters
-        // Creating a table with ambiguous names (e.g. "a" and "A") is disallowed, so this should be safe
-        List<String> partitionColumns = metadataEntry.getOriginalPartitionColumns().stream()
-                .map(columnName -> columnName.equalsIgnoreCase(sourceColumnName) ? newColumnName : columnName)
-                .collect(toImmutableList());
-
-        List<String> columnNames = getExactColumnNames(metadataEntry).stream()
-                .map(name -> name.equalsIgnoreCase(sourceColumnName) ? newColumnName : name)
-                .collect(toImmutableList());
-        Map<String, Object> columnTypes = getColumnTypes(metadataEntry).entrySet().stream()
-                .map(column -> column.getKey().equalsIgnoreCase(sourceColumnName) ? Map.entry(newColumnName, column.getValue()) : column)
-                .collect(toImmutableMap(Entry::getKey, Entry::getValue));
-        Map<String, String> columnComments = getColumnComments(metadataEntry).entrySet().stream()
-                .map(column -> column.getKey().equalsIgnoreCase(sourceColumnName) ? Map.entry(newColumnName, column.getValue()) : column)
-                .collect(toImmutableMap(Map.Entry::getKey, Map.Entry::getValue));
-        Map<String, Boolean> columnsNullability = getColumnsNullability(metadataEntry).entrySet().stream()
-                .map(column -> column.getKey().equalsIgnoreCase(sourceColumnName) ? Map.entry(newColumnName, column.getValue()) : column)
-                .collect(toImmutableMap(Map.Entry::getKey, Map.Entry::getValue));
-        Map<String, Map<String, Object>> columnMetadata = getColumnsMetadata(metadataEntry).entrySet().stream()
-                .map(column -> column.getKey().equalsIgnoreCase(sourceColumnName) ? Map.entry(newColumnName, column.getValue()) : column)
-                .collect(toImmutableMap(Map.Entry::getKey, Map.Entry::getValue));
-        try {
-            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, table.getLocation(), table.getSchemaTableName());
-            appendTableEntries(
-                    commitVersion,
-                    transactionLogWriter,
-                    metadataEntry.getId(),
-                    columnNames,
-                    partitionColumns,
-                    columnTypes,
-                    columnComments,
-                    columnsNullability,
-                    columnMetadata,
-                    metadataEntry.getConfiguration(),
-                    RENAME_COLUMN_OPERATION,
-                    session,
-                    Optional.ofNullable(metadataEntry.getDescription()),
-                    protocolEntry);
-            transactionLogWriter.flush();
-            // Don't update extended statistics because it uses physical column names internally
-        }
-        catch (Exception e) {
-            throw new TrinoException(DELTA_LAKE_BAD_WRITE, format("Unable to rename '%s' column for: %s.%s", sourceColumnName, table.getSchemaName(), table.getTableName()), e);
-        }
+        throw new UnsupportedOperationException("Melody table schema modifications (column rename) must go through the Asset Manager");
     }
 
     private void appendTableEntries(
@@ -2541,32 +1964,13 @@ public class DeltaLakeMetadata
     @Override
     public void dropTable(ConnectorSession session, ConnectorTableHandle tableHandle)
     {
-        LocatedTableHandle handle = (LocatedTableHandle) tableHandle;
-        boolean deleteData = handle.managed();
-        metastore.dropTable(session, handle.schemaTableName(), handle.location(), deleteData);
-        if (deleteData) {
-            try {
-                fileSystemFactory.create(session).deleteDirectory(Location.of(handle.location()));
-            }
-            catch (IOException e) {
-                throw new TrinoException(DELTA_LAKE_FILESYSTEM_ERROR, format("Failed to delete directory %s of the table %s", handle.location(), handle.schemaTableName()), e);
-            }
-        }
-        // As a precaution, clear the caches
-        statisticsAccess.invalidateCache(handle.schemaTableName(), Optional.of(handle.location()));
-        transactionLogAccess.invalidateCache(handle.schemaTableName(), Optional.of(handle.location()));
+        throw new UnsupportedOperationException("Melody table deletion must go through the Asset Manager");
     }
 
     @Override
     public void renameTable(ConnectorSession session, ConnectorTableHandle tableHandle, SchemaTableName newTableName)
     {
-        DeltaLakeTableHandle handle = checkValidTableHandle(tableHandle);
-        DeltaMetastoreTable table = metastore.getTable(handle.getSchemaName(), handle.getTableName())
-                .orElseThrow(() -> new TableNotFoundException(handle.getSchemaTableName()));
-        if (table.managed() && !allowManagedTableRename) {
-            throw new TrinoException(NOT_SUPPORTED, "Renaming managed tables is not allowed with current metastore configuration");
-        }
-        metastore.renameTable(session, handle.getSchemaTableName(), newTableName);
+        throw new UnsupportedOperationException("Melody table renames must go through the Asset Manager");
     }
 
     private CommitInfoEntry getCommitInfoEntry(
@@ -2663,7 +2067,7 @@ public class DeltaLakeMetadata
         if (isHiveSystemSchema(schemaName)) {
             throw new TrinoException(NOT_SUPPORTED, "Schema properties are not supported for system schema: " + schemaName);
         }
-        return metastore.getDatabase(schemaName)
+        return metastore.getDatabase(schemaName) // TODO why metastore?  should we even support schema properties?
                 .map(DeltaLakeSchemaProperties::fromDatabase)
                 .orElseThrow(() -> new SchemaNotFoundException(schemaName));
     }
@@ -2671,111 +2075,97 @@ public class DeltaLakeMetadata
     @Override
     public void createView(ConnectorSession session, SchemaTableName viewName, ConnectorViewDefinition definition, boolean replace)
     {
-        throw new UnsupportedOperationException("Views are not supported");
+        throw new UnsupportedOperationException("Views are not supported in Melody");
     }
 
     @Override
     public void dropView(ConnectorSession session, SchemaTableName viewName)
     {
-        throw new UnsupportedOperationException("Views are not supported");
+        throw new UnsupportedOperationException("Views are not supported in Melody");
     }
 
     @Override
     public List<SchemaTableName> listViews(ConnectorSession session, Optional<String> schemaName)
     {
-//        throw new UnsupportedOperationException("Views are not supported");
-        return new ArrayList<>();
+        return List.of();
     }
 
     @Override
     public Map<SchemaTableName, ConnectorViewDefinition> getViews(ConnectorSession session, Optional<String> schemaName)
     {
-//        throw new UnsupportedOperationException("Views are not supported");
-        return new HashMap<>();
+        return Map.of();
     }
 
     @Override
     public Optional<ConnectorViewDefinition> getView(ConnectorSession session, SchemaTableName viewName)
     {
-//        throw new UnsupportedOperationException("Views are not supported");
         return Optional.empty();
     }
 
     @Override
     public void createRole(ConnectorSession session, String role, Optional<TrinoPrincipal> grantor)
     {
-        throw new UnsupportedOperationException("Access management is not supported");
+        throw new UnsupportedOperationException("Melody access management must go through the Access Manager");
     }
 
     @Override
     public void dropRole(ConnectorSession session, String role)
     {
-        throw new UnsupportedOperationException("Access management is not supported");
+        throw new UnsupportedOperationException("Melody access management must go through the Access Manager");
     }
 
     @Override
     public Set<String> listRoles(ConnectorSession session)
     {
-        throw new UnsupportedOperationException("Access management is not supported");
+        throw new UnsupportedOperationException("Melody access management must go through the Access Manager");
     }
 
     @Override
     public Set<RoleGrant> listRoleGrants(ConnectorSession session, TrinoPrincipal principal)
     {
-        throw new UnsupportedOperationException("Access management is not supported");
+        throw new UnsupportedOperationException("Melody access management must go through the Access Manager");
     }
 
     @Override
     public void grantRoles(ConnectorSession session, Set<String> roles, Set<TrinoPrincipal> grantees, boolean withAdminOption, Optional<TrinoPrincipal> grantor)
     {
-        throw new UnsupportedOperationException("Access management is not supported");
+        throw new UnsupportedOperationException("Melody access management must go through the Access Manager");
     }
 
     @Override
     public void revokeRoles(ConnectorSession session, Set<String> roles, Set<TrinoPrincipal> grantees, boolean adminOptionFor, Optional<TrinoPrincipal> grantor)
     {
-        throw new UnsupportedOperationException("Access management is not supported");
+        throw new UnsupportedOperationException("Melody access management must go through the Access Manager");
     }
 
     @Override
     public Set<RoleGrant> listApplicableRoles(ConnectorSession session, TrinoPrincipal principal)
     {
-        throw new UnsupportedOperationException("Access management is not supported");
+        throw new UnsupportedOperationException("Melody access management must go through the Access Manager");
     }
 
     @Override
     public Set<String> listEnabledRoles(ConnectorSession session)
     {
-        throw new UnsupportedOperationException("Access management is not supported");
+        throw new UnsupportedOperationException("Melody access management must go through the Access Manager");
     }
 
     @Override
     public void grantTablePrivileges(ConnectorSession session, SchemaTableName schemaTableName, Set<Privilege> privileges, TrinoPrincipal grantee, boolean grantOption)
     {
-        throw new UnsupportedOperationException("Access management is not supported");
+        throw new UnsupportedOperationException("Melody access management must go through the Access Manager");
     }
 
     @Override
     public void revokeTablePrivileges(ConnectorSession session, SchemaTableName schemaTableName, Set<Privilege> privileges, TrinoPrincipal grantee, boolean grantOption)
     {
-        throw new UnsupportedOperationException("Access management is not supported");
+        throw new UnsupportedOperationException("Melody access management must go through the Access Manager");
     }
 
     @Override
     public List<GrantInfo> listTablePrivileges(ConnectorSession session, SchemaTablePrefix schemaTablePrefix)
     {
-        throw new UnsupportedOperationException("Access management is not supported");
-    }
-
-    private List<SchemaTableName> listTables(ConnectorSession session, SchemaTablePrefix prefix)
-    {
-        if (prefix.getTable().isEmpty()) {
-            return listTables(session, prefix.getSchema());
-        }
-        SchemaTableName tableName = prefix.toSchemaTableName();
-        return metastore.getTable(tableName.getSchemaName(), tableName.getTableName())
-                .map(table -> ImmutableList.of(tableName))
-                .orElse(ImmutableList.of());
+        throw new UnsupportedOperationException("Melody access management must go through the Access Manager");
     }
 
     private void setRollback(Runnable action)
@@ -3529,7 +2919,7 @@ public class DeltaLakeMetadata
         String tableName = DeltaLakeTableName.tableNameFrom(systemTableName.getTableName());
         Optional<DeltaMetastoreTable> table;
         try {
-            table = metastore.getTable(systemTableName.getSchemaName(), tableName);
+            table = metastore.getTable(systemTableName.getSchemaName(), tableName); // TODO why metastore?  What is a raw system table?
         }
         catch (NotADeltaLakeTableException e) {
             return Optional.empty();
@@ -3727,7 +3117,7 @@ public class DeltaLakeMetadata
     public DeltaLakeMetastore getMetastore()
     {
         return metastore;
-    }
+    } // TODO why metastore?
 
     private static ColumnMetadata getColumnMetadata(DeltaLakeColumnHandle column, @Nullable String comment, boolean nullability, @Nullable String generation)
     {
