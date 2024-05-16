@@ -28,8 +28,11 @@ import io.trino.parquet.ParquetReaderOptions;
 import io.trino.parquet.reader.MetadataReader;
 import io.trino.plugin.deltalake.delete.PageFilter;
 import io.trino.plugin.deltalake.delete.PositionDeleteFilter;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystem;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystemFactory;
 import io.trino.plugin.deltalake.transactionlog.DeletionVectorEntry;
 import io.trino.plugin.deltalake.transactionlog.DeltaLakeSchemaSupport.ColumnMappingMode;
+import io.trino.plugin.deltalake.util.MelodyUtils;
 import io.trino.plugin.hive.FileFormatDataSourceStats;
 import io.trino.plugin.hive.HiveColumnHandle;
 import io.trino.plugin.hive.HiveColumnProjectionInfo;
@@ -43,16 +46,7 @@ import io.trino.spi.Page;
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.Block;
 import io.trino.spi.block.LongArrayBlock;
-import io.trino.spi.connector.ColumnHandle;
-import io.trino.spi.connector.ConnectorPageSource;
-import io.trino.spi.connector.ConnectorPageSourceProvider;
-import io.trino.spi.connector.ConnectorSession;
-import io.trino.spi.connector.ConnectorSplit;
-import io.trino.spi.connector.ConnectorTableHandle;
-import io.trino.spi.connector.ConnectorTransactionHandle;
-import io.trino.spi.connector.DynamicFilter;
-import io.trino.spi.connector.EmptyPageSource;
-import io.trino.spi.connector.FixedPageSource;
+import io.trino.spi.connector.*;
 import io.trino.spi.predicate.Domain;
 import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.type.StandardTypes;
@@ -106,7 +100,7 @@ public class DeltaLakePageSourceProvider
     private static final int MAX_RLE_PAGE_SIZE = DEFAULT_MAX_PAGE_SIZE_IN_BYTES / SIZE_OF_LONG;
     private static final int MAX_RLE_ROW_ID_PAGE_SIZE = DEFAULT_MAX_PAGE_SIZE_IN_BYTES / (SIZE_OF_LONG * 2);
 
-    private final TrinoFileSystemFactory fileSystemFactory;
+    private final MelodyFileSystemFactory fileSystemFactory;
     private final FileFormatDataSourceStats fileFormatDataSourceStats;
     private final ParquetReaderOptions parquetReaderOptions;
     private final int domainCompactionThreshold;
@@ -115,7 +109,7 @@ public class DeltaLakePageSourceProvider
 
     @Inject
     public DeltaLakePageSourceProvider(
-            TrinoFileSystemFactory fileSystemFactory,
+            MelodyFileSystemFactory fileSystemFactory,
             FileFormatDataSourceStats fileFormatDataSourceStats,
             ParquetReaderConfig parquetReaderConfig,
             DeltaLakeConfig deltaLakeConfig,
@@ -199,8 +193,9 @@ public class DeltaLakePageSourceProvider
         }
 
         Location location = Location.of(split.getPath());
-        TrinoFileSystem fileSystem = fileSystemFactory.create(session);
-        TrinoInputFile inputFile = fileSystem.newInputFile(location, split.getFileSize());
+        MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
+        String schema = table.getSchemaTableName().getSchemaName();
+        TrinoInputFile inputFile = fileSystem.newInputFile(location, split.getFileSize(), MelodyUtils.getOrgFromSchema(schema), MelodyUtils.getDomainFromSchema(schema), ""); // TODO token from session
         ParquetReaderOptions options = parquetReaderOptions.withMaxReadBlockSize(getParquetMaxReadBlockSize(session))
                 .withMaxReadBlockRowCount(getParquetMaxReadBlockRowCount(session))
                 .withSmallFileThreshold(getParquetSmallFileThreshold(session))

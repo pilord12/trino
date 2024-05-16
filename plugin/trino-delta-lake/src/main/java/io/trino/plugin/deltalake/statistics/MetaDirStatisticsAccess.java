@@ -19,6 +19,9 @@ import io.trino.filesystem.Location;
 import io.trino.filesystem.TrinoFileSystem;
 import io.trino.filesystem.TrinoFileSystemFactory;
 import io.trino.filesystem.TrinoInputFile;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystem;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystemFactory;
+import io.trino.plugin.deltalake.util.MelodyUtils;
 import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.SchemaTableName;
@@ -44,12 +47,12 @@ public class MetaDirStatisticsAccess
     private static final String STARBURST_META_DIR = TRANSACTION_LOG_DIRECTORY + "/_starburst_meta";
     private static final String STARBURST_STATISTICS_FILE = "extendeded_stats.json";
 
-    private final TrinoFileSystemFactory fileSystemFactory;
+    private final MelodyFileSystemFactory fileSystemFactory;
     private final JsonCodec<ExtendedStatistics> statisticsCodec;
 
     @Inject
     public MetaDirStatisticsAccess(
-            TrinoFileSystemFactory fileSystemFactory,
+            MelodyFileSystemFactory fileSystemFactory,
             JsonCodec<ExtendedStatistics> statisticsCodec)
     {
         this.fileSystemFactory = requireNonNull(fileSystemFactory, "fileSystemFactory is null");
@@ -63,15 +66,17 @@ public class MetaDirStatisticsAccess
             String tableLocation)
     {
         Location location = Location.of(tableLocation);
-        return readExtendedStatistics(session, location, STATISTICS_META_DIR, STATISTICS_FILE)
-                .or(() -> readExtendedStatistics(session, location, STARBURST_META_DIR, STARBURST_STATISTICS_FILE));
+        return readExtendedStatistics(session, location, STATISTICS_META_DIR, STATISTICS_FILE, schemaTableName)
+                .or(() -> readExtendedStatistics(session, location, STARBURST_META_DIR, STARBURST_STATISTICS_FILE, schemaTableName));
     }
 
-    private Optional<ExtendedStatistics> readExtendedStatistics(ConnectorSession session, Location tableLocation, String statisticsDirectory, String statisticsFile)
+    private Optional<ExtendedStatistics> readExtendedStatistics(ConnectorSession session, Location tableLocation, String statisticsDirectory, String statisticsFile, SchemaTableName table)
     {
         try {
             Location statisticsPath = tableLocation.appendPath(statisticsDirectory).appendPath(statisticsFile);
-            TrinoInputFile inputFile = fileSystemFactory.create(session).newInputFile(statisticsPath);
+            MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
+            String schema = table.getSchemaName();
+            TrinoInputFile inputFile = fileSystem.newInputFile(statisticsPath, MelodyUtils.getOrgFromSchema(schema), MelodyUtils.getDomainFromSchema(schema), ""); // TODO token from session
             try (InputStream inputStream = inputFile.newStream()) {
                 return Optional.of(statisticsCodec.fromJson(inputStream.readAllBytes()));
             }
@@ -94,14 +99,17 @@ public class MetaDirStatisticsAccess
         try {
             Location statisticsPath = Location.of(tableLocation).appendPath(STATISTICS_META_DIR).appendPath(STATISTICS_FILE);
 
-            TrinoFileSystem fileSystem = fileSystemFactory.create(session);
-            try (OutputStream outputStream = fileSystem.newOutputFile(statisticsPath).createOrOverwrite()) {
+            MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
+            String schema = schemaTableName.getSchemaName();
+            String org = MelodyUtils.getOrgFromSchema(schema);
+            String domain = MelodyUtils.getDomainFromSchema(schema);
+            try (OutputStream outputStream = fileSystem.newOutputFile(statisticsPath, org, domain, "").createOrOverwrite()) { // TODO token from session
                 outputStream.write(statisticsCodec.toJsonBytes(statistics));
             }
 
             // Remove outdated Starburst stats file, if it exists.
             Location starburstStatisticsPath = Location.of(tableLocation).appendPath(STARBURST_META_DIR).appendPath(STARBURST_STATISTICS_FILE);
-            if (fileSystem.newInputFile(starburstStatisticsPath).exists()) {
+            if (fileSystem.newInputFile(starburstStatisticsPath, org, domain, "").exists()) { // TODO token from session
                 fileSystem.deleteFile(starburstStatisticsPath);
             }
         }
@@ -115,8 +123,11 @@ public class MetaDirStatisticsAccess
     {
         Location statisticsPath = Location.of(tableLocation).appendPath(STATISTICS_META_DIR).appendPath(STATISTICS_FILE);
         try {
-            TrinoFileSystem fileSystem = fileSystemFactory.create(session);
-            if (fileSystem.newInputFile(statisticsPath).exists()) {
+            MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
+            String schema = schemaTableName.getSchemaName();
+            String org = MelodyUtils.getOrgFromSchema(schema);
+            String domain = MelodyUtils.getDomainFromSchema(schema);
+            if (fileSystem.newInputFile(statisticsPath, org, domain, "").exists()) { // TODO token from session
                 fileSystem.deleteFile(statisticsPath);
             }
         }

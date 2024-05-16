@@ -26,7 +26,10 @@ import io.trino.filesystem.TrinoFileSystem;
 import io.trino.filesystem.TrinoFileSystemFactory;
 import io.trino.parquet.writer.ParquetWriterOptions;
 import io.trino.plugin.deltalake.DataFileInfo.DataFileType;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystem;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystemFactory;
 import io.trino.plugin.deltalake.util.DeltaLakeWriteUtils;
+import io.trino.plugin.deltalake.util.MelodyUtils;
 import io.trino.plugin.hive.HivePartitionKey;
 import io.trino.plugin.hive.parquet.ParquetFileWriter;
 import io.trino.plugin.hive.util.HiveUtil;
@@ -37,6 +40,7 @@ import io.trino.spi.TrinoException;
 import io.trino.spi.block.Block;
 import io.trino.spi.connector.ConnectorPageSink;
 import io.trino.spi.connector.ConnectorSession;
+import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.TypeOperators;
 import org.apache.parquet.format.CompressionCodec;
@@ -84,9 +88,10 @@ public abstract class AbstractDeltaLakePageSink
     private final int[] partitionColumnsInputIndex;
     private final List<String> originalPartitionColumnNames;
     private final List<Type> partitionColumnTypes;
+    private final SchemaTableName table;
 
     private final PageIndexer pageIndexer;
-    private final TrinoFileSystem fileSystem;
+    private final MelodyFileSystem fileSystem;
 
     private final int maxOpenWriters;
 
@@ -113,7 +118,7 @@ public abstract class AbstractDeltaLakePageSink
             List<DeltaLakeColumnHandle> inputColumns,
             List<String> originalPartitionColumns,
             PageIndexerFactory pageIndexerFactory,
-            TrinoFileSystemFactory fileSystemFactory,
+            MelodyFileSystemFactory fileSystemFactory,
             int maxOpenWriters,
             JsonCodec<DataFileInfo> dataFileInfoCodec,
             Location tableLocation,
@@ -121,17 +126,19 @@ public abstract class AbstractDeltaLakePageSink
             ConnectorSession session,
             DeltaLakeWriterStats stats,
             String trinoVersion,
-            DeltaLakeParquetSchemaMapping parquetSchemaMapping)
+            DeltaLakeParquetSchemaMapping parquetSchemaMapping,
+            SchemaTableName table)
     {
         this.typeOperators = requireNonNull(typeOperators, "typeOperators is null");
         requireNonNull(inputColumns, "inputColumns is null");
 
         requireNonNull(pageIndexerFactory, "pageIndexerFactory is null");
 
-        this.fileSystem = requireNonNull(fileSystemFactory, "fileSystemFactory is null").create(session);
+        this.fileSystem = (MelodyFileSystem) requireNonNull(fileSystemFactory, "fileSystemFactory is null").create(session);
         this.maxOpenWriters = maxOpenWriters;
         this.dataFileInfoCodec = requireNonNull(dataFileInfoCodec, "dataFileInfoCodec is null");
         this.parquetSchemaMapping = requireNonNull(parquetSchemaMapping, "parquetSchemaMapping is null");
+        this.table = requireNonNull(table, "table is null");
 
         // determine the input index of the partition columns and data columns
         int[] partitionColumnInputIndex = new int[originalPartitionColumns.size()];
@@ -443,8 +450,12 @@ public abstract class AbstractDeltaLakePageSink
                 .build();
         CompressionCodec compressionCodec = getCompressionCodec(session).getParquetCompressionCodec();
 
+        String schema = table.getSchemaName();
+        String org = MelodyUtils.getOrgFromSchema(schema);
+        String domain = MelodyUtils.getDomainFromSchema(schema);
+
         try {
-            Closeable rollbackAction = () -> fileSystem.deleteFile(path);
+            Closeable rollbackAction = () -> fileSystem.deleteFile(path, org, domain, ""); // TODO token from session
 
             List<Type> parquetTypes = dataColumnTypes.stream()
                     .map(type -> toParquetType(typeOperators, type))
@@ -458,7 +469,7 @@ public abstract class AbstractDeltaLakePageSink
             }
 
             return new ParquetFileWriter(
-                    fileSystem.newOutputFile(path),
+                    fileSystem.newOutputFile(path, org, domain, ""), // TODO token from session
                     rollbackAction,
                     parquetTypes,
                     dataColumnNames,

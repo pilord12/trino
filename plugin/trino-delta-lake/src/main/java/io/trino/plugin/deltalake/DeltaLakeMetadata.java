@@ -1062,7 +1062,7 @@ public class DeltaLakeMetadata
                     maxFieldId = OptionalInt.of(fieldId.get());
                 }
 
-                TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriterWithoutTransactionIsolation(session, location);
+                TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriterWithoutTransactionIsolation(session, location, schemaTableName);
                 appendTableEntries(
                         0,
                         transactionLogWriter,
@@ -1396,7 +1396,7 @@ public class DeltaLakeMetadata
         try {
             // For CTAS there is no risk of multiple writers racing. Using writer without transaction isolation so we are not limiting support for CTAS to
             // filesystems for which we have proper implementations of TransactionLogSynchronizers.
-            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriterWithoutTransactionIsolation(session, handle.getLocation());
+            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriterWithoutTransactionIsolation(session, handle.getLocation(), schemaTableName);
 
             appendTableEntries(
                     0,
@@ -1495,7 +1495,7 @@ public class DeltaLakeMetadata
         try {
             long commitVersion = handle.getReadVersion() + 1;
 
-            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, handle.getLocation());
+            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, handle.getLocation(), handle.getSchemaTableName());
             appendTableEntries(
                     commitVersion,
                     transactionLogWriter,
@@ -1537,7 +1537,7 @@ public class DeltaLakeMetadata
                     .collect(Collectors.toMap(Entry::getKey, Entry::getValue)));
             comment.ifPresent(s -> columnComments.put(deltaLakeColumnHandle.getBaseColumnName(), s));
 
-            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, deltaLakeTableHandle.getLocation());
+            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, deltaLakeTableHandle.getLocation(), deltaLakeTableHandle.getSchemaTableName());
             appendTableEntries(
                     commitVersion,
                     transactionLogWriter,
@@ -1624,7 +1624,7 @@ public class DeltaLakeMetadata
                 configuration.put(MAX_COLUMN_ID_CONFIGURATION_KEY, String.valueOf(maxColumnId.get()));
             }
 
-            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, handle.getLocation());
+            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, handle.getLocation(), handle.getSchemaTableName());
             appendTableEntries(
                     commitVersion,
                     transactionLogWriter,
@@ -1693,7 +1693,7 @@ public class DeltaLakeMetadata
         Map<String, Boolean> columnsNullability = filterKeys(getColumnsNullability(metadataEntry), name -> !name.equalsIgnoreCase(dropColumnName));
         Map<String, Map<String, Object>> columnMetadata = filterKeys(getColumnsMetadata(metadataEntry), name -> !name.equalsIgnoreCase(dropColumnName));
         try {
-            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, table.getLocation());
+            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, table.getLocation(), table.getSchemaTableName());
             appendTableEntries(
                     commitVersion,
                     transactionLogWriter,
@@ -1777,7 +1777,7 @@ public class DeltaLakeMetadata
                 .map(column -> column.getKey().equalsIgnoreCase(sourceColumnName) ? Map.entry(newColumnName, column.getValue()) : column)
                 .collect(toImmutableMap(Map.Entry::getKey, Map.Entry::getValue));
         try {
-            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, table.getLocation());
+            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, table.getLocation(), table.getSchemaTableName());
             appendTableEntries(
                     commitVersion,
                     transactionLogWriter,
@@ -1974,7 +1974,7 @@ public class DeltaLakeMetadata
 
         boolean writeCommitted = false;
         try {
-            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, handle.getLocation());
+            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, handle.getLocation(), handle.getTableName());
 
             long createdTime = Instant.now().toEpochMilli();
 
@@ -2128,7 +2128,7 @@ public class DeltaLakeMetadata
         String tableLocation = handle.getLocation();
         boolean writeCommitted = false;
         try {
-            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, tableLocation);
+            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, tableLocation, handle.getSchemaTableName());
 
             long createdTime = Instant.now().toEpochMilli();
 
@@ -2334,7 +2334,7 @@ public class DeltaLakeMetadata
 
         boolean writeCommitted = false;
         try {
-            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, tableLocation);
+            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, tableLocation, executeHandle.getSchemaTableName()); // TODO keaton check
 
             long createdTime = Instant.now().toEpochMilli();
             long commitVersion = readVersion + 1;
@@ -2391,7 +2391,7 @@ public class DeltaLakeMetadata
     {
         try {
             String tableMetadataDirectory = getTransactionLogDir(tableHandle.getLocation());
-            boolean requiresOptIn = transactionLogWriterFactory.newWriter(session, tableMetadataDirectory).isUnsafe();
+            boolean requiresOptIn = transactionLogWriterFactory.newWriter(session, tableMetadataDirectory, tableHandle.getSchemaTableName()).isUnsafe();
             return !requiresOptIn || unsafeWritesEnabled;
         }
         catch (TrinoException e) {
@@ -2631,7 +2631,7 @@ public class DeltaLakeMetadata
         }
 
         try {
-            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, handle.getLocation());
+            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, handle.getLocation(), handle.getSchemaTableName());
             transactionLogWriter.appendCommitInfoEntry(getCommitInfoEntry(session, commitVersion, createdTime, SET_TBLPROPERTIES_OPERATION, readVersion));
             protocolEntry.ifPresent(transactionLogWriter::appendProtocolEntry);
 
@@ -3332,7 +3332,7 @@ public class DeltaLakeMetadata
             long createdTime = Instant.now().toEpochMilli();
             long readVersion = tableHandle.getReadVersion();
             long commitVersion = readVersion + 1;
-            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, tableHandle.getLocation());
+            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, tableHandle.getLocation(), tableHandle.getSchemaTableName());
             transactionLogWriter.appendCommitInfoEntry(getCommitInfoEntry(session, commitVersion, createdTime, OPTIMIZE_OPERATION, readVersion));
             updatedAddFileEntries.forEach(transactionLogWriter::appendAddFileEntry);
             transactionLogWriter.flush();
@@ -3601,7 +3601,7 @@ public class DeltaLakeMetadata
         List<AddFileEntry> activeFiles = getAddFileEntriesMatchingEnforcedPartitionConstraint(session, tableHandle);
 
         try {
-            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, tableLocation);
+            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, tableLocation, tableHandle.getSchemaTableName());
 
             long writeTimestamp = Instant.now().toEpochMilli();
             MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);

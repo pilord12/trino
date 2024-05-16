@@ -122,6 +122,11 @@ public final class MelodyFileSystem
         try {
             request.setEntity(new StringEntity(json));
             CloseableHttpResponse response = client.execute(request);
+
+            if (response.getStatusLine().getStatusCode() != 200) {
+                throw new RuntimeException("Unsuccessful response from AccessManager: " + response.getStatusLine().toString());
+            }
+
             var jsonResponse = new JSONObject(EntityUtils.toString(response.getEntity()));
             var credentials = credentialsBuilder.decode(jsonResponse.toString());
 
@@ -211,7 +216,7 @@ public final class MelodyFileSystem
     public void deleteDirectory(Location location, String org, String domain, String token)
             throws IOException
     {
-        FileIterator iterator = listFiles(location);
+        FileIterator iterator = listFiles(location, org, domain, token);
         while (iterator.hasNext()) {
             List<Location> files = new ArrayList<>();
             while ((files.size() < 1000) && iterator.hasNext()) {

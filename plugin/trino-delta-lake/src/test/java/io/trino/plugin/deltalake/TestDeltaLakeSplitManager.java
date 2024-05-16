@@ -208,7 +208,7 @@ public class TestDeltaLakeSplitManager
                 new TestingNodeManager(),
                 checkpointWriterManager,
                 DeltaLakeRedirectionsProvider.NOOP,
-                new CachingExtendedStatisticsAccess(new MetaDirStatisticsAccess(HDFS_FILE_SYSTEM_FACTORY, new JsonCodecFactory().jsonCodec(ExtendedStatistics.class))),
+                new CachingExtendedStatisticsAccess(new MetaDirStatisticsAccess(null, new JsonCodecFactory().jsonCodec(ExtendedStatistics.class))),
                 true,
                 new NodeVersion("test_version"),
                 null);

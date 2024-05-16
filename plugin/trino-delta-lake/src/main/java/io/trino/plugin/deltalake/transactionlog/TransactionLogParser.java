@@ -26,6 +26,7 @@ import io.trino.plugin.base.util.JsonUtils;
 import io.trino.plugin.deltalake.DeltaLakeColumnHandle;
 import io.trino.plugin.deltalake.filesystem.MelodyFileSystem;
 import io.trino.plugin.deltalake.transactionlog.checkpoint.LastCheckpoint;
+import io.trino.plugin.deltalake.util.MelodyUtils;
 import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.SchemaTableName;
@@ -280,7 +281,10 @@ public final class TransactionLogParser
         String transactionLogDir = getTransactionLogDir(tableLocation);
         while (true) {
             Location entryPath = getTransactionLogJsonEntryPath(transactionLogDir, version + 1);
-            if (!fileSystem.newInputFile(entryPath).exists()) {
+            String schema = table.getSchemaName();
+            String org = MelodyUtils.getOrgFromSchema(schema);
+            String domain = MelodyUtils.getDomainFromSchema(schema);
+            if (!fileSystem.newInputFile(entryPath, org, domain, "").exists()) { // TODO token from session
                 return version;
             }
             version++;

@@ -16,6 +16,7 @@ package io.trino.plugin.deltalake.transactionlog.writer;
 
 import com.google.inject.Inject;
 import io.trino.spi.connector.ConnectorSession;
+import io.trino.spi.connector.SchemaTableName;
 
 import static java.util.Objects.requireNonNull;
 
@@ -29,14 +30,14 @@ public class TransactionLogWriterFactory
         this.synchronizerManager = requireNonNull(synchronizerManager, "synchronizerManager is null");
     }
 
-    public TransactionLogWriter newWriter(ConnectorSession session, String tableLocation)
+    public TransactionLogWriter newWriter(ConnectorSession session, String tableLocation, SchemaTableName table)
     {
         TransactionLogSynchronizer synchronizer = synchronizerManager.getSynchronizer(tableLocation);
-        return new TransactionLogWriter(synchronizer, session, tableLocation);
+        return new TransactionLogWriter((S3NativeTransactionLogSynchronizer) synchronizer, session, tableLocation, table); // TODO avoid cast?
     }
 
-    public TransactionLogWriter newWriterWithoutTransactionIsolation(ConnectorSession session, String tableLocation)
+    public TransactionLogWriter newWriterWithoutTransactionIsolation(ConnectorSession session, String tableLocation, SchemaTableName table)
     {
-        return new TransactionLogWriter(synchronizerManager.getNoIsolationSynchronizer(), session, tableLocation);
+        return new TransactionLogWriter((S3NativeTransactionLogSynchronizer) synchronizerManager.getNoIsolationSynchronizer(), session, tableLocation, table); // TODO avoid cast?
     }
 }

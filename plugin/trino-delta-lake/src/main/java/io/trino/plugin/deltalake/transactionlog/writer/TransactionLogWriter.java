@@ -24,6 +24,7 @@ import io.trino.plugin.deltalake.transactionlog.MetadataEntry;
 import io.trino.plugin.deltalake.transactionlog.ProtocolEntry;
 import io.trino.plugin.deltalake.transactionlog.RemoveFileEntry;
 import io.trino.spi.connector.ConnectorSession;
+import io.trino.spi.connector.SchemaTableName;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -44,15 +45,17 @@ public class TransactionLogWriter
 
     private Optional<DeltaLakeTransactionLogEntry> commitInfoEntry = Optional.empty();
     private final List<DeltaLakeTransactionLogEntry> entries = new ArrayList<>();
-    private final TransactionLogSynchronizer logSynchronizer;
+    private final S3NativeTransactionLogSynchronizer logSynchronizer;
     private final ConnectorSession session;
     private final String tableLocation;
+    private final SchemaTableName table;
 
-    public TransactionLogWriter(TransactionLogSynchronizer logSynchronizer, ConnectorSession session, String tableLocation)
+    public TransactionLogWriter(S3NativeTransactionLogSynchronizer logSynchronizer, ConnectorSession session, String tableLocation, SchemaTableName table)
     {
         this.logSynchronizer = requireNonNull(logSynchronizer, "logSynchronizer is null");
         this.session = requireNonNull(session, "session is null");
         this.tableLocation = requireNonNull(tableLocation, "tableLocation is null");
+        this.table = requireNonNull(table, "table is null");
     }
 
     public void appendCommitInfoEntry(CommitInfoEntry commitInfoEntry)
@@ -107,7 +110,7 @@ public class TransactionLogWriter
         }
 
         String clusterId = commitInfoEntry.get().getCommitInfo().getClusterId();
-        logSynchronizer.write(session, clusterId, logEntry, bos.toByteArray());
+        logSynchronizer.write(session, clusterId, logEntry, bos.toByteArray(), table);
     }
 
     private void writeEntry(OutputStream outputStream, DeltaLakeTransactionLogEntry deltaLakeTransactionLogEntry)

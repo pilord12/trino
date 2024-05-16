@@ -24,6 +24,9 @@ import io.trino.filesystem.TrinoFileSystemFactory;
 import io.trino.filesystem.TrinoInputFile;
 import io.trino.parquet.ParquetReaderOptions;
 import io.trino.parquet.writer.ParquetWriterOptions;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystem;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystemFactory;
+import io.trino.plugin.deltalake.util.MelodyUtils;
 import io.trino.plugin.hive.FileFormatDataSourceStats;
 import io.trino.plugin.hive.ReaderPageSource;
 import io.trino.plugin.hive.parquet.ParquetFileWriter;
@@ -33,10 +36,7 @@ import io.trino.spi.TrinoException;
 import io.trino.spi.block.Block;
 import io.trino.spi.block.ColumnarRow;
 import io.trino.spi.block.RunLengthEncodedBlock;
-import io.trino.spi.connector.ConnectorMergeSink;
-import io.trino.spi.connector.ConnectorPageSink;
-import io.trino.spi.connector.ConnectorPageSource;
-import io.trino.spi.connector.ConnectorSession;
+import io.trino.spi.connector.*;
 import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.TypeOperators;
@@ -94,7 +94,7 @@ public class DeltaLakeMergeSink
     public static final String UPDATE_POSTIMAGE_CDF_LABEL = "update_postimage";
 
     private final TypeOperators typeOperators;
-    private final TrinoFileSystem fileSystem;
+    private final MelodyFileSystem fileSystem;
     private final ConnectorSession session;
     private final DateTimeZone parquetDateTimeZone;
     private final String trinoVersion;
@@ -113,13 +113,15 @@ public class DeltaLakeMergeSink
     private final int[] dataColumnsIndices;
     private final int[] dataAndRowIdColumnsIndices;
     private final DeltaLakeParquetSchemaMapping parquetSchemaMapping;
+    private final String org;
+    private final String domain;
 
     @Nullable
     private DeltaLakeCdfPageSink cdfPageSink;
 
     public DeltaLakeMergeSink(
             TypeOperators typeOperators,
-            TrinoFileSystemFactory fileSystemFactory,
+            MelodyFileSystemFactory fileSystemFactory,
             ConnectorSession session,
             DateTimeZone parquetDateTimeZone,
             String trinoVersion,
@@ -132,11 +134,12 @@ public class DeltaLakeMergeSink
             int domainCompactionThreshold,
             Supplier<DeltaLakeCdfPageSink> cdfPageSinkSupplier,
             boolean cdfEnabled,
-            DeltaLakeParquetSchemaMapping parquetSchemaMapping)
+            DeltaLakeParquetSchemaMapping parquetSchemaMapping,
+            SchemaTableName table)
     {
         this.typeOperators = requireNonNull(typeOperators, "typeOperators is null");
         this.session = requireNonNull(session, "session is null");
-        this.fileSystem = fileSystemFactory.create(session);
+        this.fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
         this.parquetDateTimeZone = requireNonNull(parquetDateTimeZone, "parquetDateTimeZone is null");
         this.trinoVersion = requireNonNull(trinoVersion, "trinoVersion is null");
         this.dataFileInfoCodec = requireNonNull(dataFileInfoCodec, "dataFileInfoCodec is null");
@@ -163,6 +166,8 @@ public class DeltaLakeMergeSink
             dataAndRowIdColumnsIndices[i] = i;
         }
         dataAndRowIdColumnsIndices[tableColumnCount] = tableColumnCount + 1; // row ID channel
+        this.org = MelodyUtils.getOrgFromSchema(table.getSchemaName());
+        this.domain = MelodyUtils.getDomainFromSchema(table.getSchemaName());
     }
 
     @Override
@@ -362,7 +367,7 @@ public class DeltaLakeMergeSink
         CompressionCodec compressionCodec = getCompressionCodec(session).getParquetCompressionCodec();
 
         try {
-            Closeable rollbackAction = () -> fileSystem.deleteFile(path);
+            Closeable rollbackAction = () -> fileSystem.deleteFile(path, org, domain, ""); // TODO token from session
             dataColumns.forEach(column -> verify(column.isBaseColumn(), "Unexpected dereference: %s", column));
 
             List<Type> parquetTypes = dataColumns.stream()
@@ -373,7 +378,7 @@ public class DeltaLakeMergeSink
                     .collect(toImmutableList());
 
             return new ParquetFileWriter(
-                    fileSystem.newOutputFile(path),
+                    fileSystem.newOutputFile(path, org, domain, ""), // TODO token from session
                     rollbackAction,
                     parquetTypes,
                     dataColumnNames,
@@ -495,7 +500,7 @@ public class DeltaLakeMergeSink
     private ReaderPageSource createParquetPageSource(Location path)
             throws IOException
     {
-        TrinoInputFile inputFile = fileSystem.newInputFile(path);
+        TrinoInputFile inputFile = fileSystem.newInputFile(path, org, domain, ""); // TODO token from session
         long fileSize = inputFile.length();
         return ParquetPageSourceFactory.createPageSource(
                 inputFile,
