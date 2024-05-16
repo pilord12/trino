@@ -21,7 +21,6 @@ import dev.failsafe.RetryPolicy;
 import io.airlift.json.ObjectMapperProvider;
 import io.airlift.log.Logger;
 import io.trino.filesystem.*;
-import io.trino.filesystem.s3.S3FileSystem;
 import io.trino.plugin.base.util.JsonUtils;
 import io.trino.plugin.deltalake.DeltaLakeColumnHandle;
 import io.trino.plugin.deltalake.filesystem.MelodyFileSystem;

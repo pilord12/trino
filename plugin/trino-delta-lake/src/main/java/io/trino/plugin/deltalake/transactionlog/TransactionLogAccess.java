@@ -216,7 +216,7 @@ public class TransactionLogAccess
                     METADATA,
                     entryStream -> entryStream.map(DeltaLakeTransactionLogEntry::getMetaData).filter(Objects::nonNull),
                     session,
-                    fileSystemFactory.create(session),
+                    (MelodyFileSystem) fileSystemFactory.create(session),
                     fileFormatDataSourceStats)) {
                 // Get last entry in the stream
                 tableSnapshot.setCachedMetadata(metadataEntries.reduce((first, second) -> second));
@@ -276,7 +276,7 @@ public class TransactionLogAccess
                 ImmutableSet.of(ADD),
                 checkpointSchemaManager,
                 typeManager,
-                fileSystemFactory.create(session),
+                (MelodyFileSystem) fileSystemFactory.create(session),
                 fileFormatDataSourceStats,
                 Optional.of(new MetadataAndProtocolEntry(metadataEntry, protocolEntry)))) {
             return activeAddEntries(checkpointEntries, transactions)
@@ -344,7 +344,7 @@ public class TransactionLogAccess
                 REMOVE,
                 entryStream -> entryStream.map(DeltaLakeTransactionLogEntry::getRemove).filter(Objects::nonNull),
                 session,
-                fileSystemFactory.create(session),
+                (MelodyFileSystem) fileSystemFactory.create(session),
                 fileFormatDataSourceStats);
     }
 
@@ -359,7 +359,7 @@ public class TransactionLogAccess
                 entryTypes,
                 (checkpointStream, jsonStream) -> entryMapper.apply(Stream.concat(checkpointStream, jsonStream.stream().map(Transaction::transactionEntries).flatMap(Collection::stream))),
                 session,
-                fileSystemFactory.create(session),
+                (MelodyFileSystem) fileSystemFactory.create(session),
                 fileFormatDataSourceStats);
 
         return entries.collect(toImmutableMap(Object::getClass, Function.identity(), (first, second) -> second));
@@ -379,7 +379,7 @@ public class TransactionLogAccess
                 PROTOCOL,
                 entryStream -> entryStream.map(DeltaLakeTransactionLogEntry::getProtocol).filter(Objects::nonNull),
                 session,
-                fileSystemFactory.create(session),
+                (MelodyFileSystem) fileSystemFactory.create(session),
                 fileFormatDataSourceStats);
     }
 
@@ -390,7 +390,7 @@ public class TransactionLogAccess
                 COMMIT,
                 entryStream -> entryStream.map(DeltaLakeTransactionLogEntry::getCommitInfo).filter(Objects::nonNull),
                 session,
-                fileSystemFactory.create(session),
+                (MelodyFileSystem) fileSystemFactory.create(session),
                 fileFormatDataSourceStats);
     }
 
@@ -411,7 +411,7 @@ public class TransactionLogAccess
             Set<CheckpointEntryIterator.EntryType> entryTypes,
             BiFunction<Stream<DeltaLakeTransactionLogEntry>, List<Transaction>, Stream<T>> entryMapper,
             ConnectorSession session,
-            TrinoFileSystem fileSystem,
+            MelodyFileSystem fileSystem,
             FileFormatDataSourceStats stats)
     {
         try {
@@ -436,7 +436,7 @@ public class TransactionLogAccess
             CheckpointEntryIterator.EntryType entryType,
             Function<Stream<DeltaLakeTransactionLogEntry>, Stream<T>> entryMapper,
             ConnectorSession session,
-            TrinoFileSystem fileSystem,
+            MelodyFileSystem fileSystem,
             FileFormatDataSourceStats stats)
     {
         return getEntries(

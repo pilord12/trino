@@ -24,6 +24,7 @@ import io.trino.plugin.deltalake.transactionlog.checkpoint.CheckpointEntryIterat
 import io.trino.plugin.deltalake.transactionlog.checkpoint.CheckpointSchemaManager;
 import io.trino.plugin.deltalake.transactionlog.checkpoint.LastCheckpoint;
 import io.trino.plugin.deltalake.transactionlog.checkpoint.TransactionLogTail;
+import io.trino.plugin.deltalake.util.MelodyUtils;
 import io.trino.plugin.hive.FileFormatDataSourceStats;
 import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ConnectorSession;
@@ -58,6 +59,8 @@ public class TableSnapshot
     private final boolean checkpointRowStatisticsWritingEnabled;
     private final int domainCompactionThreshold;
     private final Map<String, TrinoFileSystemFactory> factories;
+    private final String org;
+    private final String domain;
 
     private Optional<MetadataEntry> cachedMetadata = Optional.empty();
 
@@ -79,6 +82,9 @@ public class TableSnapshot
         this.checkpointRowStatisticsWritingEnabled = checkpointRowStatisticsWritingEnabled;
         this.domainCompactionThreshold = domainCompactionThreshold;
         this.factories = factories;
+        String schema = table.getSchemaName();
+        this.org = MelodyUtils.getOrgFromSchema(schema);
+        this.domain = MelodyUtils.getDomainFromSchema(schema);
     }
 
     public static TableSnapshot load(
@@ -184,7 +190,7 @@ public class TableSnapshot
             Set<CheckpointEntryIterator.EntryType> entryTypes,
             CheckpointSchemaManager checkpointSchemaManager,
             TypeManager typeManager,
-            TrinoFileSystem fileSystem,
+            MelodyFileSystem fileSystem,
             FileFormatDataSourceStats stats,
             Optional<MetadataAndProtocolEntry> metadataAndProtocol)
             throws IOException
@@ -202,7 +208,7 @@ public class TableSnapshot
 
         Stream<DeltaLakeTransactionLogEntry> resultStream = Stream.empty();
         for (Location checkpointPath : getCheckpointPartPaths(checkpoint)) {
-            TrinoInputFile checkpointFile = fileSystem.newInputFile(checkpointPath);
+            TrinoInputFile checkpointFile = fileSystem.newInputFile(checkpointPath, org, domain, ""); // TODO token from session
             resultStream = Stream.concat(
                     resultStream,
                     stream(getCheckpointTransactionLogEntries(

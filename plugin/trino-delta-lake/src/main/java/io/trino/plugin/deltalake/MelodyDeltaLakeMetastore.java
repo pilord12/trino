@@ -52,7 +52,8 @@ public class MelodyDeltaLakeMetastore
     @Override
     public List<String> getAllTables(String databaseName)
     {
-        String jwt = ""; // populate from CLI metadata
+        // TODO remove
+        String jwt = "";
 
         CloseableHttpClient client = HttpClientBuilder.create().build();
         var request = new HttpPost("https://dev.dataplatform.hpedev.net/dev/data-catalog/organizations/octo/domains/harmony-dev/assets");

@@ -13,7 +13,6 @@
  */
 package io.trino.plugin.deltalake.filesystem;
 
-import io.trino.filesystem.s3.S3Context;
 import io.trino.filesystem.s3.S3FileSystemConfig.S3SseType;
 import io.trino.memory.context.AggregatedMemoryContext;
 import io.trino.memory.context.LocalMemoryContext;

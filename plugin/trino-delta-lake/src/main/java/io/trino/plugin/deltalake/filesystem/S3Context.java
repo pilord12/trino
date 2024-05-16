@@ -11,7 +11,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.trino.filesystem.s3;
+package io.trino.plugin.deltalake.filesystem;
 
 import io.trino.filesystem.s3.S3FileSystemConfig.S3SseType;
 import software.amazon.awssdk.services.s3.model.RequestPayer;

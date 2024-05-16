@@ -47,7 +47,7 @@ import static com.google.common.collect.Iterables.partition;
 import static com.google.common.collect.Multimaps.toMultimap;
 import static java.util.Objects.requireNonNull;
 
-public final class S3FileSystem
+final class S3FileSystem
         implements TrinoFileSystem
 {
     private final S3Client client;
@@ -72,15 +72,6 @@ public final class S3FileSystem
     {
         return new S3InputFile(client, context, new S3Location(location), length);
     }
-
-    public TrinoInputFile newInputFile(Location location, long length, String org, String domain, String token)
-    {
-        // access manager request for temp creds
-        // build S3Client
-        // return new input file with client
-        return new S3InputFile(client, context, new S3Location(location), length);
-    }
-
 
     @Override
     public TrinoOutputFile newOutputFile(Location location)

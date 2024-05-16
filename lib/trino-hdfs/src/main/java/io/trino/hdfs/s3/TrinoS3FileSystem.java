@@ -109,7 +109,6 @@ import org.apache.hadoop.fs.RemoteIterator;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.util.Progressable;
 import org.gaul.modernizer_maven_annotations.SuppressModernizer;
-import software.amazon.awssdk.services.s3.S3Client;
 
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
@@ -126,7 +125,18 @@ import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Base64;
+import java.util.Collection;
+import java.util.Date;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.OptionalInt;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -270,7 +280,6 @@ public class TrinoS3FileSystem
     private int streamingUploadPartSize;
     private TrinoS3StorageClass s3StorageClass;
     private String s3RoleSessionName;
-    private final HashMap<String, S3Client> clients = new HashMap<>();
 
     private final ExecutorService uploadExecutor = newCachedThreadPool(threadsNamed("s3-upload-%s"));
     private final ForwardingRequestHandler forwardingRequestHandler = new ForwardingRequestHandler();
@@ -1133,60 +1142,59 @@ public class TrinoS3FileSystem
 
     private AWSCredentialsProvider createAwsCredentialsProvider(URI uri, Configuration conf)
     {
-        return new HarmonyAwsCredentialsProviderV1();
         // credentials embedded in the URI take precedence and are used alone
-//        Optional<AWSCredentials> credentials = getEmbeddedAwsCredentials(uri);
-//        if (credentials.isPresent()) {
-//            return new AWSStaticCredentialsProvider(credentials.get());
-//        }
-//
-//        // a custom credential provider is also used alone
-//        String providerClass = conf.get(S3_CREDENTIALS_PROVIDER);
-//        if (!isNullOrEmpty(providerClass)) {
-//            return getCustomAWSCredentialsProvider(uri, conf, providerClass);
-//        }
-//
-//        // use configured credentials or default chain with optional role
-//        AWSCredentialsProvider provider = getAwsCredentials(conf)
-//                .map(value -> (AWSCredentialsProvider) new AWSStaticCredentialsProvider(value))
-//                .orElseGet(DefaultAWSCredentialsProviderChain::getInstance);
-//
-//        if (iamRole != null) {
-//            String stsEndpointOverride = conf.get(S3_STS_ENDPOINT);
-//            String stsRegionOverride = conf.get(S3_STS_REGION);
-//
-//            AWSSecurityTokenServiceClientBuilder stsClientBuilder = AWSSecurityTokenServiceClientBuilder.standard()
-//                    .withCredentials(provider);
-//
-//            String region;
-//            if (!isNullOrEmpty(stsRegionOverride)) {
-//                region = stsRegionOverride;
-//            }
-//            else {
-//                DefaultAwsRegionProviderChain regionProviderChain = new DefaultAwsRegionProviderChain();
-//                try {
-//                    region = regionProviderChain.getRegion();
-//                }
-//                catch (SdkClientException ex) {
-//                    log.warn("Falling back to default AWS region %s", US_EAST_1);
-//                    region = US_EAST_1.getName();
-//                }
-//            }
-//
-//            if (!isNullOrEmpty(stsEndpointOverride)) {
-//                stsClientBuilder.withEndpointConfiguration(new EndpointConfiguration(stsEndpointOverride, region));
-//            }
-//            else {
-//                stsClientBuilder.withRegion(region);
-//            }
-//
-//            provider = new STSAssumeRoleSessionCredentialsProvider.Builder(iamRole, s3RoleSessionName)
-//                    .withExternalId(externalId)
-//                    .withStsClient(stsClientBuilder.build())
-//                    .build();
-//        }
-//
-//        return provider;
+        Optional<AWSCredentials> credentials = getEmbeddedAwsCredentials(uri);
+        if (credentials.isPresent()) {
+            return new AWSStaticCredentialsProvider(credentials.get());
+        }
+
+        // a custom credential provider is also used alone
+        String providerClass = conf.get(S3_CREDENTIALS_PROVIDER);
+        if (!isNullOrEmpty(providerClass)) {
+            return getCustomAWSCredentialsProvider(uri, conf, providerClass);
+        }
+
+        // use configured credentials or default chain with optional role
+        AWSCredentialsProvider provider = getAwsCredentials(conf)
+                .map(value -> (AWSCredentialsProvider) new AWSStaticCredentialsProvider(value))
+                .orElseGet(DefaultAWSCredentialsProviderChain::getInstance);
+
+        if (iamRole != null) {
+            String stsEndpointOverride = conf.get(S3_STS_ENDPOINT);
+            String stsRegionOverride = conf.get(S3_STS_REGION);
+
+            AWSSecurityTokenServiceClientBuilder stsClientBuilder = AWSSecurityTokenServiceClientBuilder.standard()
+                    .withCredentials(provider);
+
+            String region;
+            if (!isNullOrEmpty(stsRegionOverride)) {
+                region = stsRegionOverride;
+            }
+            else {
+                DefaultAwsRegionProviderChain regionProviderChain = new DefaultAwsRegionProviderChain();
+                try {
+                    region = regionProviderChain.getRegion();
+                }
+                catch (SdkClientException ex) {
+                    log.warn("Falling back to default AWS region %s", US_EAST_1);
+                    region = US_EAST_1.getName();
+                }
+            }
+
+            if (!isNullOrEmpty(stsEndpointOverride)) {
+                stsClientBuilder.withEndpointConfiguration(new EndpointConfiguration(stsEndpointOverride, region));
+            }
+            else {
+                stsClientBuilder.withRegion(region);
+            }
+
+            provider = new STSAssumeRoleSessionCredentialsProvider.Builder(iamRole, s3RoleSessionName)
+                    .withExternalId(externalId)
+                    .withStsClient(stsClientBuilder.build())
+                    .build();
+        }
+
+        return provider;
     }
 
     private static AWSCredentialsProvider getCustomAWSCredentialsProvider(URI uri, Configuration conf, String providerClass)
@@ -1552,8 +1560,7 @@ public class TrinoS3FileSystem
                                 GetObjectRequest request = new GetObjectRequest(bucket, key)
                                         .withRange(start)
                                         .withRequesterPays(requesterPaysEnabled);
-                                var ret = s3.getObject(request).getObjectContent();
-                                return ret;
+                                return s3.getObject(request).getObjectContent();
                             }
                             catch (RuntimeException e) {
                                 STATS.newGetObjectError();

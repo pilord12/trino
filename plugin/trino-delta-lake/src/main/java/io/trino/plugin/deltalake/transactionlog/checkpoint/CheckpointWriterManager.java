@@ -20,10 +20,13 @@ import io.trino.filesystem.Location;
 import io.trino.filesystem.TrinoFileSystem;
 import io.trino.filesystem.TrinoFileSystemFactory;
 import io.trino.filesystem.TrinoOutputFile;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystem;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystemFactory;
 import io.trino.plugin.deltalake.transactionlog.DeltaLakeTransactionLogEntry;
 import io.trino.plugin.deltalake.transactionlog.TableSnapshot;
 import io.trino.plugin.deltalake.transactionlog.TableSnapshot.MetadataAndProtocolEntry;
 import io.trino.plugin.deltalake.transactionlog.TransactionLogAccess;
+import io.trino.plugin.deltalake.util.MelodyUtils;
 import io.trino.plugin.hive.FileFormatDataSourceStats;
 import io.trino.plugin.hive.NodeVersion;
 import io.trino.spi.TrinoException;
@@ -54,7 +57,7 @@ public class CheckpointWriterManager
 {
     private final TypeManager typeManager;
     private final CheckpointSchemaManager checkpointSchemaManager;
-    private final TrinoFileSystemFactory fileSystemFactory;
+    private final MelodyFileSystemFactory fileSystemFactory;
     private final String trinoVersion;
     private final TransactionLogAccess transactionLogAccess;
     private final FileFormatDataSourceStats fileFormatDataSourceStats;
@@ -64,7 +67,7 @@ public class CheckpointWriterManager
     public CheckpointWriterManager(
             TypeManager typeManager,
             CheckpointSchemaManager checkpointSchemaManager,
-            TrinoFileSystemFactory fileSystemFactory,
+            MelodyFileSystemFactory fileSystemFactory,
             NodeVersion nodeVersion,
             TransactionLogAccess transactionLogAccess,
             FileFormatDataSourceStats fileFormatDataSourceStats,
@@ -94,7 +97,7 @@ public class CheckpointWriterManager
 
             CheckpointBuilder checkpointBuilder = new CheckpointBuilder();
 
-            TrinoFileSystem fileSystem = fileSystemFactory.create(session);
+            MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
             List<DeltaLakeTransactionLogEntry> checkpointLogEntries = snapshot
                     .getCheckpointTransactionLogEntries(
                             session,
@@ -146,13 +149,16 @@ public class CheckpointWriterManager
             Location targetFile = transactionLogDir.appendPath("%020d.checkpoint.parquet".formatted(newCheckpointVersion));
             CheckpointWriter checkpointWriter = new CheckpointWriter(typeManager, checkpointSchemaManager, trinoVersion);
             CheckpointEntries checkpointEntries = checkpointBuilder.build();
-            TrinoOutputFile checkpointFile = fileSystemFactory.create(session).newOutputFile(targetFile);
+            String schema = table.getSchemaName();
+            String org = MelodyUtils.getOrgFromSchema(schema);
+            String domain = MelodyUtils.getDomainFromSchema(schema);
+            TrinoOutputFile checkpointFile = fileSystem.newOutputFile(targetFile, org, domain, ""); // TODO token from session
             checkpointWriter.write(checkpointEntries, checkpointFile);
 
             // update last checkpoint file
             LastCheckpoint newLastCheckpoint = new LastCheckpoint(newCheckpointVersion, checkpointEntries.size(), Optional.empty());
             Location checkpointPath = transactionLogDir.appendPath(LAST_CHECKPOINT_FILENAME);
-            TrinoOutputFile outputFile = fileSystem.newOutputFile(checkpointPath);
+            TrinoOutputFile outputFile = fileSystem.newOutputFile(checkpointPath, org, domain, ""); // TODO token from session
             try (OutputStream outputStream = outputFile.createOrOverwrite()) {
                 outputStream.write(lastCheckpointCodec.toJsonBytes(newLastCheckpoint));
             }

@@ -15,7 +15,6 @@ package io.trino.plugin.deltalake.filesystem;
 
 import io.trino.filesystem.Location;
 import io.trino.filesystem.TrinoOutputFile;
-import io.trino.filesystem.s3.S3Context;
 import io.trino.memory.context.AggregatedMemoryContext;
 import software.amazon.awssdk.services.s3.S3Client;
 
