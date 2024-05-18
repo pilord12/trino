@@ -254,8 +254,10 @@ public final class DeltaLakeQueryRunner
                             "delta.connector-client-id", "5c803829-bcff-48ea-9310-77e9c7a29a41_api",
                             "delta.connector-client-secret", "", // GLP client secret
                             "delta.connector-oauth-url", "https://qa-sso.ccs.arubathena.com/as/token.oauth2",
+                            "s3.requester-pays", "true",
+                            "s3.streaming.part-size", "6MB",
+                            "s3.max-connections", "3",
                             "hive.metastore", "file",
-//                            "fs.native-s3.enabled", "true",
                             "hive.metastore.catalog.dir", metastoreDirectory.toUri().toString()));
 
             log.info("Data directory is: %s", metastoreDirectory);

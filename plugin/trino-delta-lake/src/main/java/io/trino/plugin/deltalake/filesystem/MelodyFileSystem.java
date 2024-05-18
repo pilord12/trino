@@ -13,7 +13,6 @@
  */
 package io.trino.plugin.deltalake.filesystem;
 
-import com.amazonaws.auth.SessionCredentialsProviderFactory;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.SetMultimap;
 import hpe.harmony.model.scalalang.*;
@@ -23,16 +22,14 @@ import io.trino.filesystem.Location;
 import io.trino.filesystem.TrinoFileSystem;
 import io.trino.filesystem.TrinoInputFile;
 import io.trino.filesystem.TrinoOutputFile;
-import io.trino.plugin.deltalake.DeltaLakeMetadata;
 import org.apache.http.client.ClientProtocolException;
 import org.apache.http.client.methods.CloseableHttpResponse;
-import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClientBuilder;
 import org.apache.http.util.EntityUtils;
-import org.json.JSONArray;
+import org.http4s.client.Client;
 import org.json.JSONObject;
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
@@ -68,45 +65,72 @@ public final class MelodyFileSystem
     private final RequestPayer requestPayer;
     private static final Logger log = Logger.get(MelodyFileSystem.class);
 
-    private Map<String, S3Client> s3Clients = new HashMap<>();
+    private record ClientCredsPair(S3Client client, AwsSessionCredentials creds) {}
+
+    private Map<String, ClientCredsPair> clientCreds = new HashMap<>();
     private final CloseableHttpClient client = HttpClientBuilder.create().build();
 
     private final TokenExchangeBuilder teb = new TokenExchangeBuilder();
     private final TemporaryCredentialsBuilder credentialsBuilder = new TemporaryCredentialsBuilder();
 
+    // TODO remove
+    private final String t = "";
+
+
     public MelodyFileSystem(S3Context context)
     {
+        var creds = AwsSessionCredentials.builder()
+                .accessKeyId("ASIAUN6CSVRVTRVXEDGN")
+                .secretAccessKey("")
+                .expirationTime(Instant.parse("2024-05-16T20:05:46Z"))
+                .sessionToken("")
+                .build();
+
+        S3ClientBuilder builder = S3Client.builder();
+
+        ApacheHttpClient.Builder httpClient = ApacheHttpClient.builder()
+                .maxConnections(context.maxConnections());
+
+        StaticCredentialsProvider scp = StaticCredentialsProvider.create(creds);
+
+        builder.httpClient(httpClient.build());
+        builder.credentialsProvider(scp);
+
+        var s3c = builder.build();
+
+        clientCreds.put(t, new ClientCredsPair(s3c, creds));
+
+
         this.context = requireNonNull(context, "context is null");
         this.requestPayer = context.requestPayer();
     }
 
     private S3Client getOrCreateClient(String token, String org, String domain) {
-        // TODO remove
-        String t = "";
-        S3Client client = s3Clients.get(t);
+        // TODO t to token
+        ClientCredsPair cc = clientCreds.get(t);
+        boolean credsExpired = cc.creds.expirationTime().map(i -> i.isBefore(Instant.now())).orElse(false);
 
-        if (client == null) {
-            client = createClient(t, org, domain);
-            s3Clients.put(t, client);
+        if (cc.client == null || credsExpired) {
+            cc = createClient(t, org, domain);
+            clientCreds.put(t, cc);
         }
-        return client;
+        return cc.client;
     }
 
-    private S3Client createClient(String token, String org, String domain) {
+    private ClientCredsPair createClient(String token, String org, String domain) {
         S3ClientBuilder builder = S3Client.builder();
 
 
         ApacheHttpClient.Builder httpClient = ApacheHttpClient.builder()
-                .maxConnections(3); // TODO configurable
+                .maxConnections(context.maxConnections());
 
         var creds = generateTemporaryCredentials(token, org, domain);
         StaticCredentialsProvider scp = StaticCredentialsProvider.create(creds);
 
         builder.httpClient(httpClient.build());
-        builder.region(Region.US_WEST_2); // TODO is region needed?
         builder.credentialsProvider(scp);
 
-        return builder.build();
+        return new ClientCredsPair(builder.build(), creds);
     }
 
     private AwsSessionCredentials generateTemporaryCredentials(String token, String org, String domain) {
