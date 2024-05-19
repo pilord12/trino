@@ -139,7 +139,10 @@ public class DeltaLakeMergeSink
     {
         this.typeOperators = requireNonNull(typeOperators, "typeOperators is null");
         this.session = requireNonNull(session, "session is null");
-        this.fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
+        String schema = table.getSchemaName();
+        String org = MelodyUtils.getOrgFromSchema(schema);
+        String domain = MelodyUtils.getDomainFromSchema(schema);
+        this.fileSystem = fileSystemFactory.getOrCreate(session, org, domain);
         this.parquetDateTimeZone = requireNonNull(parquetDateTimeZone, "parquetDateTimeZone is null");
         this.trinoVersion = requireNonNull(trinoVersion, "trinoVersion is null");
         this.dataFileInfoCodec = requireNonNull(dataFileInfoCodec, "dataFileInfoCodec is null");
@@ -367,7 +370,7 @@ public class DeltaLakeMergeSink
         CompressionCodec compressionCodec = getCompressionCodec(session).getParquetCompressionCodec();
 
         try {
-            Closeable rollbackAction = () -> fileSystem.deleteFile(path, org, domain, ""); // TODO token from session
+            Closeable rollbackAction = () -> fileSystem.deleteFile(path);
             dataColumns.forEach(column -> verify(column.isBaseColumn(), "Unexpected dereference: %s", column));
 
             List<Type> parquetTypes = dataColumns.stream()
@@ -378,7 +381,7 @@ public class DeltaLakeMergeSink
                     .collect(toImmutableList());
 
             return new ParquetFileWriter(
-                    fileSystem.newOutputFile(path, org, domain, ""), // TODO token from session
+                    fileSystem.newOutputFile(path),
                     rollbackAction,
                     parquetTypes,
                     dataColumnNames,
@@ -500,7 +503,7 @@ public class DeltaLakeMergeSink
     private ReaderPageSource createParquetPageSource(Location path)
             throws IOException
     {
-        TrinoInputFile inputFile = fileSystem.newInputFile(path, org, domain, ""); // TODO token from session
+        TrinoInputFile inputFile = fileSystem.newInputFile(path);
         long fileSize = inputFile.length();
         return ParquetPageSourceFactory.createPageSource(
                 inputFile,

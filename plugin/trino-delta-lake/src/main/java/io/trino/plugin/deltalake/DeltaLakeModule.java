@@ -115,7 +115,6 @@ public class DeltaLakeModule
         binder.bind(MelodyFileSystemFactory.class).in(Scopes.SINGLETON);
 
         var factories = newMapBinder(binder, String.class, TrinoFileSystemFactory.class);
-//        install(new S3FileSystemModule());
         factories.addBinding("s3").to(MelodyFileSystemFactory.class);
         factories.addBinding("s3a").to(MelodyFileSystemFactory.class);
         factories.addBinding("s3n").to(MelodyFileSystemFactory.class);

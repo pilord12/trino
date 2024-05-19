@@ -277,7 +277,7 @@ public class TestDeltaLakeBasic
                 "ALTER TABLE " + tableName + " EXECUTE OPTIMIZE");
 
         // Verify 'add' entry contains the expected physical name in the stats
-        List<DeltaLakeTransactionLogEntry> transactionLog = getEntriesFromJson(4, tableLocation.resolve("_delta_log").toString(), null, null, null).orElseThrow();
+        List<DeltaLakeTransactionLogEntry> transactionLog = getEntriesFromJson(4, tableLocation.resolve("_delta_log").toString(), null).orElseThrow();
         assertThat(transactionLog).hasSize(5);
         assertThat(transactionLog.get(0).getCommitInfo()).isNotNull();
         assertThat(transactionLog.get(1).getRemove()).isNotNull();
@@ -482,7 +482,7 @@ public class TestDeltaLakeBasic
 
         assertUpdate("INSERT INTO " + tableName + " VALUES (10, 1), (20, 1), (null, 1)", 3);
 
-        List<DeltaLakeTransactionLogEntry> transactionLog = getEntriesFromJson(1, tableLocation.resolve("_delta_log").toString(), null, null, null).orElseThrow();
+        List<DeltaLakeTransactionLogEntry> transactionLog = getEntriesFromJson(1, tableLocation.resolve("_delta_log").toString(), null).orElseThrow();
         assertThat(transactionLog).hasSize(2);
         AddFileEntry addFileEntry = transactionLog.get(1).getAdd();
         DeltaLakeFileStatistics stats = addFileEntry.getStats().orElseThrow();
@@ -492,7 +492,7 @@ public class TestDeltaLakeBasic
 
         assertUpdate("UPDATE " + tableName + " SET upper_case = upper_case + 10", 3);
 
-        List<DeltaLakeTransactionLogEntry> transactionLogAfterUpdate = getEntriesFromJson(2, tableLocation.resolve("_delta_log").toString(), null, null, null).orElseThrow();
+        List<DeltaLakeTransactionLogEntry> transactionLogAfterUpdate = getEntriesFromJson(2, tableLocation.resolve("_delta_log").toString(), null).orElseThrow();
         assertThat(transactionLogAfterUpdate).hasSize(3);
         AddFileEntry updateAddFileEntry = transactionLogAfterUpdate.get(2).getAdd();
         DeltaLakeFileStatistics updateStats = updateAddFileEntry.getStats().orElseThrow();
@@ -621,7 +621,7 @@ public class TestDeltaLakeBasic
 
         // Verify reader/writer version and features in ProtocolEntry
         String tableLocation = getTableLocation(tableName);
-        List<DeltaLakeTransactionLogEntry> transactionLogs = getEntriesFromJson(0, tableLocation + "/_delta_log", null, null, null).orElseThrow();
+        List<DeltaLakeTransactionLogEntry> transactionLogs = getEntriesFromJson(0, tableLocation + "/_delta_log", null).orElseThrow();
         ProtocolEntry protocolEntry = transactionLogs.get(1).getProtocol();
         assertThat(protocolEntry).isNotNull();
         assertThat(protocolEntry.getMinReaderVersion()).isEqualTo(3);
@@ -771,7 +771,7 @@ public class TestDeltaLakeBasic
                         ('part', null, 8.0, 0.1111111111111111, null, null, null),
                         (null, null, null, null, 9.0, null, null)
                         """);
-        List<DeltaLakeTransactionLogEntry> transactionLogs = getEntriesFromJson(2, tableLocation.resolve("_delta_log").toString(), null, null, null).orElseThrow();
+        List<DeltaLakeTransactionLogEntry> transactionLogs = getEntriesFromJson(2, tableLocation.resolve("_delta_log").toString(), null).orElseThrow();
         assertThat(transactionLogs).hasSize(2);
         AddFileEntry addFileEntry = transactionLogs.get(1).getAdd();
         assertThat(addFileEntry).isNotNull();
@@ -795,7 +795,7 @@ public class TestDeltaLakeBasic
         assertUpdate("CALL system.register_table('%s', '%s', '%s')".formatted(getSession().getSchema().orElseThrow(), tableName, tableLocation.toUri()));
         assertQueryReturnsEmptyResult("SELECT * FROM " + tableName);
 
-        List<DeltaLakeTransactionLogEntry> transactionLog = getEntriesFromJson(0, tableLocation.resolve("_delta_log").toString(), null, null, null).orElseThrow();
+        List<DeltaLakeTransactionLogEntry> transactionLog = getEntriesFromJson(0, tableLocation.resolve("_delta_log").toString(), null).orElseThrow();
         assertThat(transactionLog).hasSize(3);
         MetadataEntry metadataEntry = transactionLog.get(2).getMetaData();
         assertThat(getColumnsMetadata(metadataEntry).get("b"))
@@ -807,7 +807,7 @@ public class TestDeltaLakeBasic
         // Verify a column operation preserves delta.identity.* column properties
         assertUpdate("COMMENT ON COLUMN " + tableName + ".b IS 'test column comment'");
 
-        List<DeltaLakeTransactionLogEntry> transactionLogAfterComment = getEntriesFromJson(1, tableLocation.resolve("_delta_log").toString(), null, null, null).orElseThrow();
+        List<DeltaLakeTransactionLogEntry> transactionLogAfterComment = getEntriesFromJson(1, tableLocation.resolve("_delta_log").toString(), null).orElseThrow();
         assertThat(transactionLogAfterComment).hasSize(3);
         MetadataEntry commentMetadataEntry = transactionLogAfterComment.get(2).getMetaData();
         assertThat(getColumnsMetadata(commentMetadataEntry).get("b"))
@@ -955,7 +955,7 @@ public class TestDeltaLakeBasic
             throws IOException
     {
         TrinoFileSystem fileSystem = new HdfsFileSystemFactory(HDFS_ENVIRONMENT, HDFS_FILE_SYSTEM_STATS).create(SESSION);
-        DeltaLakeTransactionLogEntry transactionLog = getEntriesFromJson(entryNumber, tableLocation.resolve("_delta_log").toString(), null, null, null).orElseThrow().stream()
+        DeltaLakeTransactionLogEntry transactionLog = getEntriesFromJson(entryNumber, tableLocation.resolve("_delta_log").toString(), null).orElseThrow().stream()
                 .filter(log -> log.getMetaData() != null)
                 .collect(onlyElement());
         return transactionLog.getMetaData();

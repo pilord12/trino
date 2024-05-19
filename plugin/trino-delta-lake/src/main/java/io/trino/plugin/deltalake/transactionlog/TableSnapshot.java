@@ -58,9 +58,6 @@ public class TableSnapshot
     private final ParquetReaderOptions parquetReaderOptions;
     private final boolean checkpointRowStatisticsWritingEnabled;
     private final int domainCompactionThreshold;
-    private final Map<String, TrinoFileSystemFactory> factories;
-    private final String org;
-    private final String domain;
 
     private Optional<MetadataEntry> cachedMetadata = Optional.empty();
 
@@ -71,8 +68,7 @@ public class TableSnapshot
             String tableLocation,
             ParquetReaderOptions parquetReaderOptions,
             boolean checkpointRowStatisticsWritingEnabled,
-            int domainCompactionThreshold,
-            Map<String, TrinoFileSystemFactory> factories)
+            int domainCompactionThreshold)
     {
         this.table = requireNonNull(table, "table is null");
         this.lastCheckpoint = requireNonNull(lastCheckpoint, "lastCheckpoint is null");
@@ -81,10 +77,6 @@ public class TableSnapshot
         this.parquetReaderOptions = requireNonNull(parquetReaderOptions, "parquetReaderOptions is null");
         this.checkpointRowStatisticsWritingEnabled = checkpointRowStatisticsWritingEnabled;
         this.domainCompactionThreshold = domainCompactionThreshold;
-        this.factories = factories;
-        String schema = table.getSchemaName();
-        this.org = MelodyUtils.getOrgFromSchema(schema);
-        this.domain = MelodyUtils.getDomainFromSchema(schema);
     }
 
     public static TableSnapshot load(
@@ -94,13 +86,11 @@ public class TableSnapshot
             String tableLocation,
             ParquetReaderOptions parquetReaderOptions,
             boolean checkpointRowStatisticsWritingEnabled,
-            int domainCompactionThreshold,
-            Map<String, TrinoFileSystemFactory> factories,
-            ConnectorSession session)
+            int domainCompactionThreshold)
             throws IOException
     {
         Optional<Long> lastCheckpointVersion = lastCheckpoint.map(LastCheckpoint::getVersion);
-        TransactionLogTail transactionLogTail = TransactionLogTail.loadNewTail(fileSystem, tableLocation, lastCheckpointVersion, session, table);
+        TransactionLogTail transactionLogTail = TransactionLogTail.loadNewTail(fileSystem, tableLocation, lastCheckpointVersion);
 
         return new TableSnapshot(
                 table,
@@ -109,17 +99,16 @@ public class TableSnapshot
                 tableLocation,
                 parquetReaderOptions,
                 checkpointRowStatisticsWritingEnabled,
-                domainCompactionThreshold,
-                factories);
+                domainCompactionThreshold);
     }
 
-    public Optional<TableSnapshot> getUpdatedSnapshot(MelodyFileSystem fileSystem, Optional<Long> toVersion, ConnectorSession session, SchemaTableName table)
+    public Optional<TableSnapshot> getUpdatedSnapshot(MelodyFileSystem fileSystem, Optional<Long> toVersion, SchemaTableName table)
             throws IOException
     {
         if (toVersion.isEmpty()) {
             // Load any newer table snapshot
 
-            Optional<LastCheckpoint> lastCheckpoint = readLastCheckpoint(fileSystem, session, table, tableLocation, factories);
+            Optional<LastCheckpoint> lastCheckpoint = readLastCheckpoint(fileSystem, tableLocation);
             if (lastCheckpoint.isPresent()) {
                 long ourCheckpointVersion = getLastCheckpointVersion().orElse(0L);
                 if (ourCheckpointVersion != lastCheckpoint.get().getVersion()) {
@@ -131,14 +120,12 @@ public class TableSnapshot
                             tableLocation,
                             parquetReaderOptions,
                             checkpointRowStatisticsWritingEnabled,
-                            domainCompactionThreshold,
-                            factories,
-                            session));
+                            domainCompactionThreshold));
                 }
             }
         }
 
-        Optional<TransactionLogTail> updatedLogTail = logTail.getUpdatedTail(fileSystem, tableLocation, toVersion, session, table);
+        Optional<TransactionLogTail> updatedLogTail = logTail.getUpdatedTail(fileSystem, tableLocation, toVersion);
         return updatedLogTail.map(transactionLogTail -> new TableSnapshot(
                 table,
                 lastCheckpoint,
@@ -146,8 +133,7 @@ public class TableSnapshot
                 tableLocation,
                 parquetReaderOptions,
                 checkpointRowStatisticsWritingEnabled,
-                domainCompactionThreshold,
-                factories));
+                domainCompactionThreshold));
     }
 
     public long getVersion()
@@ -208,7 +194,7 @@ public class TableSnapshot
 
         Stream<DeltaLakeTransactionLogEntry> resultStream = Stream.empty();
         for (Location checkpointPath : getCheckpointPartPaths(checkpoint)) {
-            TrinoInputFile checkpointFile = fileSystem.newInputFile(checkpointPath, org, domain, ""); // TODO token from session
+            TrinoInputFile checkpointFile = fileSystem.newInputFile(checkpointPath);
             resultStream = Stream.concat(
                     resultStream,
                     stream(getCheckpointTransactionLogEntries(

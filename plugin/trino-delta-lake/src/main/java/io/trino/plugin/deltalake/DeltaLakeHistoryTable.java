@@ -22,6 +22,7 @@ import io.trino.plugin.deltalake.transactionlog.CommitInfoEntry;
 import io.trino.plugin.deltalake.transactionlog.DeltaLakeTransactionLogEntry;
 import io.trino.plugin.deltalake.transactionlog.TableSnapshot;
 import io.trino.plugin.deltalake.transactionlog.TransactionLogAccess;
+import io.trino.plugin.deltalake.util.MelodyUtils;
 import io.trino.plugin.deltalake.util.PageListBuilder;
 import io.trino.spi.Page;
 import io.trino.spi.TrinoException;
@@ -165,9 +166,14 @@ public class DeltaLakeHistoryTable
             endVersionInclusive = Optional.of(snapshotVersion);
         }
 
-        MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
+        String schema = tableName.getSchemaName();
+        String org = MelodyUtils.getOrgFromSchema(schema);
+        String domain = MelodyUtils.getDomainFromSchema(schema);
+
+        MelodyFileSystem fileSystem = fileSystemFactory.getOrCreate(session, org, domain);
+
         try {
-            List<CommitInfoEntry> commitInfoEntries = loadNewTailBackward(fileSystem, tableLocation, startVersionExclusive, endVersionInclusive.get(), session, tableName).stream()
+            List<CommitInfoEntry> commitInfoEntries = loadNewTailBackward(fileSystem, tableLocation, startVersionExclusive, endVersionInclusive.get()).stream()
                     .map(DeltaLakeTransactionLogEntry::getCommitInfo)
                     .filter(Objects::nonNull)
                     .collect(toImmutableList())
@@ -187,9 +193,7 @@ public class DeltaLakeHistoryTable
             MelodyFileSystem fileSystem,
             String tableLocation,
             Optional<Long> startVersion,
-            long endVersion,
-            ConnectorSession session,
-            SchemaTableName table)
+            long endVersion)
             throws IOException
     {
         ImmutableList.Builder<DeltaLakeTransactionLogEntry> entriesBuilder = ImmutableList.builder();
@@ -200,7 +204,7 @@ public class DeltaLakeHistoryTable
         boolean endOfHead = false;
 
         while (!endOfHead) {
-            Optional<List<DeltaLakeTransactionLogEntry>> results = getEntriesFromJson(entryNumber, transactionLogDir, fileSystem, session, table);
+            Optional<List<DeltaLakeTransactionLogEntry>> results = getEntriesFromJson(entryNumber, transactionLogDir, fileSystem);
             if (results.isPresent()) {
                 entriesBuilder.addAll(results.get());
                 version = entryNumber;

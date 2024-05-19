@@ -17,6 +17,7 @@ import com.google.inject.Inject;
 import io.trino.filesystem.TrinoFileSystemFactory;
 import io.trino.parquet.ParquetReaderOptions;
 import io.trino.plugin.deltalake.DeltaLakeConfig;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystemFactory;
 import io.trino.plugin.hive.FileFormatDataSourceStats;
 import io.trino.plugin.hive.parquet.ParquetReaderConfig;
 import io.trino.spi.connector.ConnectorSession;
@@ -31,7 +32,7 @@ import static java.util.Objects.requireNonNull;
 public class TableChangesProcessorProvider
         implements TableFunctionProcessorProvider
 {
-    private final TrinoFileSystemFactory fileSystemFactory;
+    private final MelodyFileSystemFactory fileSystemFactory;
     private final DateTimeZone parquetDateTimeZone;
     private final int domainCompactionThreshold;
     private final FileFormatDataSourceStats fileFormatDataSourceStats;
@@ -39,7 +40,7 @@ public class TableChangesProcessorProvider
 
     @Inject
     public TableChangesProcessorProvider(
-            TrinoFileSystemFactory fileSystemFactory,
+            MelodyFileSystemFactory fileSystemFactory,
             DeltaLakeConfig deltaLakeConfig,
             FileFormatDataSourceStats fileFormatDataSourceStats,
             ParquetReaderConfig parquetReaderConfig)

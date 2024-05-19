@@ -51,7 +51,6 @@ public class DeltaLakeMetadataFactory
     private final boolean deleteSchemaLocationsFallback;
     private final boolean useUniqueTableLocation;
     private final DeltaLakeConfig config;
-    private final Map<String, TrinoFileSystemFactory> factories;
 
     private final boolean allowManagedTableRename;
     private final String trinoVersion;
@@ -71,8 +70,7 @@ public class DeltaLakeMetadataFactory
             DeltaLakeRedirectionsProvider deltaLakeRedirectionsProvider,
             CachingExtendedStatisticsAccess statisticsAccess,
             @AllowDeltaLakeManagedTableRename boolean allowManagedTableRename,
-            NodeVersion nodeVersion,
-            Map<String, TrinoFileSystemFactory> factories)
+            NodeVersion nodeVersion)
     {
         this.fileSystemFactory = requireNonNull(fileSystemFactory, "fileSystemFactory is null");
         this.transactionLogAccess = requireNonNull(transactionLogAccess, "transactionLogAccess is null");
@@ -93,7 +91,6 @@ public class DeltaLakeMetadataFactory
         this.useUniqueTableLocation = deltaLakeConfig.isUniqueTableLocation();
         this.allowManagedTableRename = allowManagedTableRename;
         this.trinoVersion = requireNonNull(nodeVersion, "nodeVersion is null").toString();
-        this.factories = requireNonNull(factories, "factories is null");
         this.config = deltaLakeConfig;
     }
 
@@ -123,7 +120,6 @@ public class DeltaLakeMetadataFactory
                 statisticsAccess,
                 useUniqueTableLocation,
                 allowManagedTableRename,
-                config,
-                factories);
+                config);
     }
 }

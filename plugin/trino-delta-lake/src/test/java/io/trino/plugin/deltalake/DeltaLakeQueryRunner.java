@@ -257,7 +257,8 @@ public final class DeltaLakeQueryRunner
                             "s3.requester-pays", "true",
                             "s3.streaming.part-size", "6MB",
                             "s3.max-connections", "3",
-                            "hive.metastore", "file",
+                            "s3.region", "us-west-2",
+                            "delta.melody-base-url", "https://dev.dataplatform.hpedev.net/dev/",
                             "hive.metastore.catalog.dir", metastoreDirectory.toUri().toString()));
 
             log.info("Data directory is: %s", metastoreDirectory);

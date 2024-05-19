@@ -81,11 +81,20 @@ public class DeltaLakeConfig
     private String clientId;
     private String clientSecret;
     private String oAuthUrl;
+    private String melodyBaseUrl;
 
     public Duration getMetadataCacheTtl()
     {
         return metadataCacheTtl;
     }
+
+    @Config("delta.melody-base-url")
+    public DeltaLakeConfig setMelodyBaseUrl(String melodyBaseUrl) {
+        this.melodyBaseUrl = melodyBaseUrl;
+        return this;
+    }
+
+    public String getMelodyBaseUrl() { return melodyBaseUrl; }
 
     @Config("delta.connector-client-id")
     public DeltaLakeConfig setClientId(String clientId)

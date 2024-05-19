@@ -15,34 +15,17 @@ package io.trino.plugin.deltalake.filesystem;
 
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.SetMultimap;
-import hpe.harmony.model.scalalang.*;
-import io.airlift.log.Logger;
 import io.trino.filesystem.FileIterator;
 import io.trino.filesystem.Location;
 import io.trino.filesystem.TrinoFileSystem;
 import io.trino.filesystem.TrinoInputFile;
 import io.trino.filesystem.TrinoOutputFile;
-import org.apache.http.client.ClientProtocolException;
-import org.apache.http.client.methods.CloseableHttpResponse;
-import org.apache.http.client.methods.HttpPost;
-import org.apache.http.entity.StringEntity;
-import org.apache.http.impl.client.CloseableHttpClient;
-import org.apache.http.impl.client.HttpClientBuilder;
-import org.apache.http.util.EntityUtils;
-import org.http4s.client.Client;
-import org.json.JSONObject;
-import software.amazon.awssdk.auth.credentials.AwsSessionCredentials;
-import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.core.exception.SdkException;
-import software.amazon.awssdk.http.apache.ApacheHttpClient;
-import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.s3.S3ClientBuilder;
 import software.amazon.awssdk.services.s3.model.*;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable;
 
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -63,161 +46,51 @@ public final class MelodyFileSystem
 {
     private final S3Context context;
     private final RequestPayer requestPayer;
-    private static final Logger log = Logger.get(MelodyFileSystem.class);
 
-    private record ClientCredsPair(S3Client client, AwsSessionCredentials creds) {}
+    private S3Client s3Client;
+    private final Instant credsExpiration;
 
-    private Map<String, ClientCredsPair> clientCreds = new HashMap<>();
-    private final CloseableHttpClient client = HttpClientBuilder.create().build();
-
-    private final TokenExchangeBuilder teb = new TokenExchangeBuilder();
-    private final TemporaryCredentialsBuilder credentialsBuilder = new TemporaryCredentialsBuilder();
-
-    // TODO remove
-    private final String t = "";
-
-
-    public MelodyFileSystem(S3Context context)
+    public MelodyFileSystem(S3Client s3Client, S3Context context, Instant credsExpiration)
     {
-        var creds = AwsSessionCredentials.builder()
-                .accessKeyId("ASIAUN6CSVRVTRVXEDGN")
-                .secretAccessKey("")
-                .expirationTime(Instant.parse("2024-05-16T20:05:46Z"))
-                .sessionToken("")
-                .build();
-
-        S3ClientBuilder builder = S3Client.builder();
-
-        ApacheHttpClient.Builder httpClient = ApacheHttpClient.builder()
-                .maxConnections(context.maxConnections());
-
-        StaticCredentialsProvider scp = StaticCredentialsProvider.create(creds);
-
-        builder.httpClient(httpClient.build());
-        builder.credentialsProvider(scp);
-
-        var s3c = builder.build();
-
-        clientCreds.put(t, new ClientCredsPair(s3c, creds));
-
-
         this.context = requireNonNull(context, "context is null");
         this.requestPayer = context.requestPayer();
+        this.credsExpiration = credsExpiration;
+        this.s3Client = s3Client;
     }
 
-    private S3Client getOrCreateClient(String token, String org, String domain) {
-        // TODO t to token
-        ClientCredsPair cc = clientCreds.get(t);
-        boolean credsExpired = cc.creds.expirationTime().map(i -> i.isBefore(Instant.now())).orElse(false);
-
-        if (cc.client == null || credsExpired) {
-            cc = createClient(t, org, domain);
-            clientCreds.put(t, cc);
-        }
-        return cc.client;
+    public Instant getCredsExpiration() {
+        return credsExpiration;
     }
 
-    private ClientCredsPair createClient(String token, String org, String domain) {
-        S3ClientBuilder builder = S3Client.builder();
-
-
-        ApacheHttpClient.Builder httpClient = ApacheHttpClient.builder()
-                .maxConnections(context.maxConnections());
-
-        var creds = generateTemporaryCredentials(token, org, domain);
-        StaticCredentialsProvider scp = StaticCredentialsProvider.create(creds);
-
-        builder.httpClient(httpClient.build());
-        builder.credentialsProvider(scp);
-
-        return new ClientCredsPair(builder.build(), creds);
+    public boolean isCredsExpired() {
+        return credsExpiration.isBefore(Instant.now());
     }
 
-    private AwsSessionCredentials generateTemporaryCredentials(String token, String org, String domain) {
-        var exchangeRequest = teb.buildExchangeRequestFor(domain, org);
-        var json = teb.encode(exchangeRequest);
-
-        // TODO configurable
-        var request = new HttpPost("https://dev.dataplatform.hpedev.net/dev/data-access-manager/credentials/exchange");
-
-        request.addHeader("Content-Type", "application/json");
-        request.addHeader("Authorization", "Bearer " + token);
-        try {
-            request.setEntity(new StringEntity(json));
-            CloseableHttpResponse response = client.execute(request);
-
-            if (response.getStatusLine().getStatusCode() != 200) {
-                throw new RuntimeException("Unsuccessful response from AccessManager: " + response.getStatusLine().toString());
-            }
-
-            var jsonResponse = new JSONObject(EntityUtils.toString(response.getEntity()));
-            var credentials = credentialsBuilder.decode(jsonResponse.toString());
-
-            return AwsSessionCredentials.builder()
-                    .accessKeyId(credentials.AccessKeyId())
-                    .secretAccessKey(credentials.SecretAccessKey())
-                    .sessionToken(credentials.SessionToken())
-                    .expirationTime(Instant.parse(credentials.Expiration()))
-                    .build();
-        } catch (UnsupportedEncodingException e) {
-            log.error("Unable to encode payload to Access Manager");
-            throw new RuntimeException(e);
-        } catch (ClientProtocolException e) {
-            log.error("Unexpected HTTP exception during request to Access Manager");
-            throw new RuntimeException(e);
-        } catch (IOException e) {
-            log.error("Unexpected IO exception during request to Access Manager");
-            throw new RuntimeException(e);
-        }
+    public void close() {
+        s3Client.close();
     }
 
     @Override
     public TrinoInputFile newInputFile(Location location)
     {
-        throw new UnsupportedOperationException("MelodyFileSystem requires org, domain, and token to get file handles");
+        return new S3InputFile(s3Client, context, new S3Location(location), null);
     }
 
     @Override
     public TrinoInputFile newInputFile(Location location, long length)
     {
-        throw new UnsupportedOperationException("MelodyFileSystem requires org, domain, and token to get file handles");
-    }
-
-    public TrinoInputFile newInputFile(Location location, String org, String domain, String token)
-    {
-        return new S3InputFile(getOrCreateClient(token, org, domain), context, new S3Location(location), null);
-    }
-
-    public TrinoInputFile newInputFile(Location location, long length, String org, String domain, String token)
-    {
-        return new S3InputFile(getOrCreateClient(token, org, domain), context, new S3Location(location), length);
+        return new S3InputFile(s3Client, context, new S3Location(location), length);
     }
 
 
     @Override
     public TrinoOutputFile newOutputFile(Location location)
     {
-        throw new UnsupportedOperationException("MelodyFileSystem requires org, domain, and token to get file handles");
-    }
-
-    public TrinoOutputFile newOutputFile(Location location, String org, String domain, String token)
-    {
-        return new S3OutputFile(getOrCreateClient(token, org, domain), context, new S3Location(location));
+        return new S3OutputFile(s3Client, context, new S3Location(location));
     }
 
     @Override
     public void deleteFile(Location location)
-            throws IOException
-    {
-        throw new UnsupportedOperationException("MelodyFileSystem requires org, domain, and token to delete files");
-    }
-
-    @Override
-    public void deleteDirectory(Location location) {
-        throw new UnsupportedOperationException("MelodyFileSystem requires org, domain, and token to delete directories");
-    }
-
-    public void deleteFile(Location location, String org, String domain, String token)
             throws IOException
     {
         location.verifyValidFileLocation();
@@ -229,17 +102,18 @@ public final class MelodyFileSystem
                 .build();
 
         try {
-            getOrCreateClient(token, org, domain).deleteObject(request);
+            s3Client.deleteObject(request);
         }
         catch (SdkException e) {
             throw new IOException("Failed to delete file: " + location, e);
         }
     }
 
-    public void deleteDirectory(Location location, String org, String domain, String token)
+    @Override
+    public void deleteDirectory(Location location)
             throws IOException
     {
-        FileIterator iterator = listFiles(location, org, domain, token);
+        FileIterator iterator = listFiles(location);
         while (iterator.hasNext()) {
             List<Location> files = new ArrayList<>();
             while ((files.size() < 1000) && iterator.hasNext()) {
@@ -249,7 +123,8 @@ public final class MelodyFileSystem
         }
     }
 
-    public void deleteFiles(Collection<Location> locations, String org, String domain, String token)
+    @Override
+    public void deleteFiles(Collection<Location> locations)
             throws IOException
     {
         locations.forEach(Location::verifyValidFileLocation);
@@ -276,7 +151,7 @@ public final class MelodyFileSystem
                         .build();
 
                 try {
-                    DeleteObjectsResponse response = getOrCreateClient(token, org, domain).deleteObjects(request);
+                    DeleteObjectsResponse response = s3Client.deleteObjects(request);
                     for (S3Error error : response.errors()) {
                         failures.put("s3://%s/%s".formatted(bucket, error.key()), error.code());
                     }
@@ -300,16 +175,7 @@ public final class MelodyFileSystem
     }
 
     @Override
-    public FileIterator listFiles(Location location) throws IOException {
-        throw new UnsupportedOperationException("MelodyFileSystem requires org, domain, and token to get file handles");
-    }
-
-    @Override
-    public Optional<Boolean> directoryExists(Location location) throws IOException {
-        throw new UnsupportedOperationException("MelodyFileSystem requires org, domain, and token to get file handles");
-    }
-
-    public FileIterator listFiles(Location location, String org, String domain, String token)
+    public FileIterator listFiles(Location location)
             throws IOException
     {
         S3Location s3Location = new S3Location(location);
@@ -325,7 +191,7 @@ public final class MelodyFileSystem
                 .build();
 
         try {
-            ListObjectsV2Iterable iterable = getOrCreateClient(token, org, domain).listObjectsV2Paginator(request);
+            ListObjectsV2Iterable iterable = s3Client.listObjectsV2Paginator(request);
             return new S3FileIterator(s3Location, iterable.contents().iterator());
         }
         catch (SdkException e) {
@@ -333,7 +199,8 @@ public final class MelodyFileSystem
         }
     }
 
-    public Optional<Boolean> directoryExists(Location location, String org, String domain, String token)
+    @Override
+    public Optional<Boolean> directoryExists(Location location)
             throws IOException
     {
         validateS3Location(location);
@@ -358,11 +225,7 @@ public final class MelodyFileSystem
     }
 
     @Override
-    public Set<Location> listDirectories(Location location) throws IOException {
-        throw new UnsupportedOperationException("MelodyFileSystem requires org, domain, and token to list directories");
-    }
-
-    public Set<Location> listDirectories(Location location, String org, String domain, String token)
+    public Set<Location> listDirectories(Location location)
             throws IOException
     {
         S3Location s3Location = new S3Location(location);
@@ -380,7 +243,7 @@ public final class MelodyFileSystem
                 .build();
 
         try {
-            return getOrCreateClient(token, org, domain).listObjectsV2Paginator(request)
+            return s3Client.listObjectsV2Paginator(request)
                     .commonPrefixes().stream()
                     .map(CommonPrefix::prefix)
                     .map(baseLocation::appendPath)

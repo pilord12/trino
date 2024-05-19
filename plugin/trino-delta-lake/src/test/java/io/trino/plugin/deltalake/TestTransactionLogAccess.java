@@ -141,8 +141,7 @@ public class TestTransactionLogAccess
                 deltaLakeConfig,
                 fileFormatDataSourceStats,
                 null,
-                new ParquetReaderConfig(),
-                null);
+                new ParquetReaderConfig());
 
         DeltaLakeTableHandle tableHandle = new DeltaLakeTableHandle(
                 "schema",

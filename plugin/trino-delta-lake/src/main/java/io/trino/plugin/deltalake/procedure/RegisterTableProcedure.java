@@ -21,10 +21,13 @@ import io.trino.filesystem.TrinoFileSystem;
 import io.trino.filesystem.TrinoFileSystemFactory;
 import io.trino.plugin.deltalake.DeltaLakeConfig;
 import io.trino.plugin.deltalake.DeltaLakeMetadataFactory;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystem;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystemFactory;
 import io.trino.plugin.deltalake.metastore.DeltaLakeMetastore;
 import io.trino.plugin.deltalake.statistics.CachingExtendedStatisticsAccess;
 import io.trino.plugin.deltalake.transactionlog.TableSnapshot;
 import io.trino.plugin.deltalake.transactionlog.TransactionLogAccess;
+import io.trino.plugin.deltalake.util.MelodyUtils;
 import io.trino.plugin.hive.TableAlreadyExistsException;
 import io.trino.plugin.hive.metastore.PrincipalPrivileges;
 import io.trino.plugin.hive.metastore.Table;
@@ -56,8 +59,6 @@ import static java.lang.String.format;
 import static java.lang.invoke.MethodHandles.lookup;
 import static java.util.Objects.requireNonNull;
 
-// TODO delete this?
-
 public class RegisterTableProcedure
         implements Provider<Procedure>
 {
@@ -82,7 +83,7 @@ public class RegisterTableProcedure
     private final DeltaLakeMetadataFactory metadataFactory;
     private final TransactionLogAccess transactionLogAccess;
     private final CachingExtendedStatisticsAccess statisticsAccess;
-    private final TrinoFileSystemFactory fileSystemFactory;
+    private final MelodyFileSystemFactory fileSystemFactory;
     private final boolean registerTableProcedureEnabled;
 
     @Inject
@@ -90,7 +91,7 @@ public class RegisterTableProcedure
             DeltaLakeMetadataFactory metadataFactory,
             TransactionLogAccess transactionLogAccess,
             CachingExtendedStatisticsAccess statisticsAccess,
-            TrinoFileSystemFactory fileSystemFactory,
+            MelodyFileSystemFactory fileSystemFactory,
             DeltaLakeConfig deltaLakeConfig)
     {
         this.metadataFactory = requireNonNull(metadataFactory, "metadataFactory is null");
@@ -148,7 +149,11 @@ public class RegisterTableProcedure
             throw new SchemaNotFoundException(schemaTableName.getSchemaName());
         }
 
-        TrinoFileSystem fileSystem = fileSystemFactory.create(session);
+        String schema = schemaTableName.getSchemaName();
+        String org = MelodyUtils.getOrgFromSchema(schema);
+        String domain = MelodyUtils.getDomainFromSchema(schema);
+
+        MelodyFileSystem fileSystem = fileSystemFactory.getOrCreate(session, org, domain);
         try {
             Location transactionLogDir = Location.of(getTransactionLogDir(tableLocation));
             if (!fileSystem.listFiles(transactionLogDir).hasNext()) {

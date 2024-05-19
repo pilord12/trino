@@ -97,7 +97,11 @@ public class CheckpointWriterManager
 
             CheckpointBuilder checkpointBuilder = new CheckpointBuilder();
 
-            MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
+            String schema = table.getSchemaName();
+            String org = MelodyUtils.getOrgFromSchema(schema);
+            String domain = MelodyUtils.getDomainFromSchema(schema);
+
+            MelodyFileSystem fileSystem = fileSystemFactory.getOrCreate(session, org, domain);
             List<DeltaLakeTransactionLogEntry> checkpointLogEntries = snapshot
                     .getCheckpointTransactionLogEntries(
                             session,
@@ -149,16 +153,13 @@ public class CheckpointWriterManager
             Location targetFile = transactionLogDir.appendPath("%020d.checkpoint.parquet".formatted(newCheckpointVersion));
             CheckpointWriter checkpointWriter = new CheckpointWriter(typeManager, checkpointSchemaManager, trinoVersion);
             CheckpointEntries checkpointEntries = checkpointBuilder.build();
-            String schema = table.getSchemaName();
-            String org = MelodyUtils.getOrgFromSchema(schema);
-            String domain = MelodyUtils.getDomainFromSchema(schema);
-            TrinoOutputFile checkpointFile = fileSystem.newOutputFile(targetFile, org, domain, ""); // TODO token from session
+            TrinoOutputFile checkpointFile = fileSystem.newOutputFile(targetFile);
             checkpointWriter.write(checkpointEntries, checkpointFile);
 
             // update last checkpoint file
             LastCheckpoint newLastCheckpoint = new LastCheckpoint(newCheckpointVersion, checkpointEntries.size(), Optional.empty());
             Location checkpointPath = transactionLogDir.appendPath(LAST_CHECKPOINT_FILENAME);
-            TrinoOutputFile outputFile = fileSystem.newOutputFile(checkpointPath, org, domain, ""); // TODO token from session
+            TrinoOutputFile outputFile = fileSystem.newOutputFile(checkpointPath);
             try (OutputStream outputStream = outputFile.createOrOverwrite()) {
                 outputStream.write(lastCheckpointCodec.toJsonBytes(newLastCheckpoint));
             }

@@ -57,12 +57,10 @@ public class TransactionLogTail
     public static TransactionLogTail loadNewTail(
             MelodyFileSystem fileSystem,
             String tableLocation,
-            Optional<Long> startVersion,
-            ConnectorSession session,
-            SchemaTableName table)
+            Optional<Long> startVersion)
             throws IOException
     {
-        return loadNewTail(fileSystem, tableLocation, startVersion, Optional.empty(), session, table);
+        return loadNewTail(fileSystem, tableLocation, startVersion, Optional.empty());
     }
 
     // Load a section of the Transaction Log JSON entries. Optionally from a given start version (exclusive) through an end version (inclusive)
@@ -70,9 +68,7 @@ public class TransactionLogTail
             MelodyFileSystem fileSystem,
             String tableLocation,
             Optional<Long> startVersion,
-            Optional<Long> endVersion,
-            ConnectorSession session,
-            SchemaTableName table)
+            Optional<Long> endVersion)
             throws IOException
     {
         ImmutableList.Builder<Transaction> entriesBuilder = ImmutableList.builder();
@@ -86,7 +82,7 @@ public class TransactionLogTail
 
         boolean endOfTail = false;
         while (!endOfTail) {
-            results = getEntriesFromJson(entryNumber, transactionLogDir, fileSystem, session, table);
+            results = getEntriesFromJson(entryNumber, transactionLogDir, fileSystem);
             if (results.isPresent()) {
                 entriesBuilder.add(new Transaction(entryNumber, results.get()));
                 version = entryNumber;
@@ -107,11 +103,11 @@ public class TransactionLogTail
         return new TransactionLogTail(entriesBuilder.build(), version);
     }
 
-    public Optional<TransactionLogTail> getUpdatedTail(MelodyFileSystem fileSystem, String tableLocation, Optional<Long> endVersion, ConnectorSession session, SchemaTableName table)
+    public Optional<TransactionLogTail> getUpdatedTail(MelodyFileSystem fileSystem, String tableLocation, Optional<Long> endVersion)
             throws IOException
     {
         checkArgument(endVersion.isEmpty() || endVersion.get() > version, "Invalid endVersion, expected higher than %s, but got %s", version, endVersion);
-        TransactionLogTail newTail = loadNewTail(fileSystem, tableLocation, Optional.of(version), endVersion, session, table);
+        TransactionLogTail newTail = loadNewTail(fileSystem, tableLocation, Optional.of(version), endVersion);
         if (newTail.version == version) {
             return Optional.empty();
         }
@@ -123,12 +119,11 @@ public class TransactionLogTail
                 newTail.version));
     }
 
-    public static Optional<List<DeltaLakeTransactionLogEntry>> getEntriesFromJson(long entryNumber, String transactionLogDir, MelodyFileSystem fileSystem, ConnectorSession session, SchemaTableName table)
+    public static Optional<List<DeltaLakeTransactionLogEntry>> getEntriesFromJson(long entryNumber, String transactionLogDir, MelodyFileSystem fileSystem)
             throws IOException
     {
         Location transactionLogFilePath = getTransactionLogJsonEntryPath(transactionLogDir, entryNumber);
-        String schema = table.getSchemaName();
-        TrinoInputFile inputFile = fileSystem.newInputFile(transactionLogFilePath, MelodyUtils.getOrgFromSchema(schema), MelodyUtils.getDomainFromSchema(schema), ""); // TODO token from session
+        TrinoInputFile inputFile = fileSystem.newInputFile(transactionLogFilePath);
         try (BufferedReader reader = new BufferedReader(
                 new InputStreamReader(inputFile.newStream(), UTF_8),
                 JSON_LOG_ENTRY_READ_BUFFER_SIZE)) {

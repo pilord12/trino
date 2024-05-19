@@ -134,7 +134,11 @@ public abstract class AbstractDeltaLakePageSink
 
         requireNonNull(pageIndexerFactory, "pageIndexerFactory is null");
 
-        this.fileSystem = (MelodyFileSystem) requireNonNull(fileSystemFactory, "fileSystemFactory is null").create(session);
+        String schema = table.getSchemaName();
+        String org = MelodyUtils.getOrgFromSchema(schema);
+        String domain = MelodyUtils.getDomainFromSchema(schema);
+
+        this.fileSystem = requireNonNull(fileSystemFactory, "fileSystemFactory is null").getOrCreate(session, org, domain);
         this.maxOpenWriters = maxOpenWriters;
         this.dataFileInfoCodec = requireNonNull(dataFileInfoCodec, "dataFileInfoCodec is null");
         this.parquetSchemaMapping = requireNonNull(parquetSchemaMapping, "parquetSchemaMapping is null");
@@ -450,12 +454,8 @@ public abstract class AbstractDeltaLakePageSink
                 .build();
         CompressionCodec compressionCodec = getCompressionCodec(session).getParquetCompressionCodec();
 
-        String schema = table.getSchemaName();
-        String org = MelodyUtils.getOrgFromSchema(schema);
-        String domain = MelodyUtils.getDomainFromSchema(schema);
-
         try {
-            Closeable rollbackAction = () -> fileSystem.deleteFile(path, org, domain, ""); // TODO token from session
+            Closeable rollbackAction = () -> fileSystem.deleteFile(path);
 
             List<Type> parquetTypes = dataColumnTypes.stream()
                     .map(type -> toParquetType(typeOperators, type))
@@ -469,7 +469,7 @@ public abstract class AbstractDeltaLakePageSink
             }
 
             return new ParquetFileWriter(
-                    fileSystem.newOutputFile(path, org, domain, ""), // TODO token from session
+                    fileSystem.newOutputFile(path),
                     rollbackAction,
                     parquetTypes,
                     dataColumnNames,

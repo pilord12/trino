@@ -36,6 +36,7 @@ import io.trino.plugin.deltalake.transactionlog.checkpoint.CheckpointEntryIterat
 import io.trino.plugin.deltalake.transactionlog.checkpoint.CheckpointSchemaManager;
 import io.trino.plugin.deltalake.transactionlog.checkpoint.LastCheckpoint;
 import io.trino.plugin.deltalake.transactionlog.checkpoint.TransactionLogTail;
+import io.trino.plugin.deltalake.util.MelodyUtils;
 import io.trino.plugin.hive.FileFormatDataSourceStats;
 import io.trino.plugin.hive.parquet.ParquetReaderConfig;
 import io.trino.spi.TrinoException;
@@ -97,7 +98,6 @@ public class TransactionLogAccess
     private final ParquetReaderOptions parquetReaderOptions;
     private final boolean checkpointRowStatisticsWritingEnabled;
     private final int domainCompactionThreshold;
-    private final Map<String, TrinoFileSystemFactory> factories;
 
     private final Cache<TableLocation, TableSnapshot> tableSnapshots;
     private final Cache<TableVersion, DeltaLakeDataFileCacheEntry> activeDataFileCache;
@@ -109,8 +109,7 @@ public class TransactionLogAccess
             DeltaLakeConfig deltaLakeConfig,
             FileFormatDataSourceStats fileFormatDataSourceStats,
             MelodyFileSystemFactory fileSystemFactory,
-            ParquetReaderConfig parquetReaderConfig,
-            Map<String, TrinoFileSystemFactory> factories)
+            ParquetReaderConfig parquetReaderConfig)
     {
         this.typeManager = requireNonNull(typeManager, "typeManager is null");
         this.checkpointSchemaManager = requireNonNull(checkpointSchemaManager, "checkpointSchemaManager is null");
@@ -119,7 +118,6 @@ public class TransactionLogAccess
         this.parquetReaderOptions = parquetReaderConfig.toParquetReaderOptions().withBloomFilter(false);
         this.checkpointRowStatisticsWritingEnabled = deltaLakeConfig.isCheckpointRowStatisticsWritingEnabled();
         this.domainCompactionThreshold = deltaLakeConfig.getDomainCompactionThreshold();
-        this.factories = requireNonNull(factories, "factories is null");
 
         tableSnapshots = EvictableCacheBuilder.newBuilder()
                 .expireAfterWrite(deltaLakeConfig.getMetadataCacheTtl().toMillis(), TimeUnit.MILLISECONDS)
@@ -156,10 +154,15 @@ public class TransactionLogAccess
         TableLocation cacheKey = new TableLocation(table, tableLocation);
         TableSnapshot cachedSnapshot = tableSnapshots.getIfPresent(cacheKey);
         TableSnapshot snapshot;
-        MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
+
+        String schema = table.getSchemaName();
+        String org = MelodyUtils.getOrgFromSchema(schema);
+        String domain = MelodyUtils.getDomainFromSchema(schema);
+
+        MelodyFileSystem fileSystem = fileSystemFactory.getOrCreate(session, org, domain);
         if (cachedSnapshot == null) {
             try {
-                Optional<LastCheckpoint> lastCheckpoint = readLastCheckpoint(fileSystem, session, table, tableLocation, factories);
+                Optional<LastCheckpoint> lastCheckpoint = readLastCheckpoint(fileSystem, tableLocation);
                 snapshot = tableSnapshots.get(cacheKey, () ->
                         TableSnapshot.load(
                                 table,
@@ -168,9 +171,7 @@ public class TransactionLogAccess
                                 tableLocation,
                                 parquetReaderOptions,
                                 checkpointRowStatisticsWritingEnabled,
-                                domainCompactionThreshold,
-                                factories,
-                                session));
+                                domainCompactionThreshold));
             }
             catch (UncheckedExecutionException | ExecutionException e) {
                 throwIfUnchecked(e.getCause());
@@ -178,7 +179,7 @@ public class TransactionLogAccess
             }
         }
         else {
-            Optional<TableSnapshot> updatedSnapshot = cachedSnapshot.getUpdatedSnapshot(fileSystem, Optional.empty(), session, table);
+            Optional<TableSnapshot> updatedSnapshot = cachedSnapshot.getUpdatedSnapshot(fileSystem, Optional.empty(), table);
             if (updatedSnapshot.isPresent()) {
                 snapshot = updatedSnapshot.get();
                 tableSnapshots.asMap().replace(cacheKey, cachedSnapshot, snapshot);
@@ -210,13 +211,17 @@ public class TransactionLogAccess
 
     public MetadataEntry getMetadataEntry(TableSnapshot tableSnapshot, ConnectorSession session)
     {
+        String schema = tableSnapshot.getTable().getSchemaName();
+        String org = MelodyUtils.getOrgFromSchema(schema);
+        String domain = MelodyUtils.getDomainFromSchema(schema);
+
         if (tableSnapshot.getCachedMetadata().isEmpty()) {
             try (Stream<MetadataEntry> metadataEntries = getEntries(
                     tableSnapshot,
                     METADATA,
                     entryStream -> entryStream.map(DeltaLakeTransactionLogEntry::getMetaData).filter(Objects::nonNull),
                     session,
-                    (MelodyFileSystem) fileSystemFactory.create(session),
+                    fileSystemFactory.getOrCreate(session, org, domain),
                     fileFormatDataSourceStats)) {
                 // Get last entry in the stream
                 tableSnapshot.setCachedMetadata(metadataEntries.reduce((first, second) -> second));
@@ -230,6 +235,10 @@ public class TransactionLogAccess
     {
         try {
             TableVersion tableVersion = new TableVersion(new TableLocation(tableSnapshot.getTable(), tableSnapshot.getTableLocation()), tableSnapshot.getVersion());
+
+            String schema = tableSnapshot.getTable().getSchemaName();
+            String org = MelodyUtils.getOrgFromSchema(schema);
+            String domain = MelodyUtils.getDomainFromSchema(schema);
 
             DeltaLakeDataFileCacheEntry cacheEntry = activeDataFileCache.get(tableVersion, () -> {
                 DeltaLakeDataFileCacheEntry oldCached = activeDataFileCache.asMap().keySet().stream()
@@ -247,9 +256,7 @@ public class TransactionLogAccess
                                 oldCached.getVersion(),
                                 tableSnapshot.getVersion(),
                                 tableSnapshot,
-                                (MelodyFileSystem) fileSystemFactory.create(session),
-                                session,
-                                table);
+                                fileSystemFactory.getOrCreate(session, org, domain));
                         return oldCached.withUpdatesApplied(newEntries, tableSnapshot.getVersion());
                     }
                     catch (MissingTransactionLogException e) {
@@ -270,13 +277,17 @@ public class TransactionLogAccess
 
     private List<AddFileEntry> loadActiveFiles(TableSnapshot tableSnapshot, MetadataEntry metadataEntry, ProtocolEntry protocolEntry, ConnectorSession session)
     {
+        String schema = tableSnapshot.getTable().getSchemaName();
+        String org = MelodyUtils.getOrgFromSchema(schema);
+        String domain = MelodyUtils.getDomainFromSchema(schema);
         List<Transaction> transactions = tableSnapshot.getTransactions();
+
         try (Stream<DeltaLakeTransactionLogEntry> checkpointEntries = tableSnapshot.getCheckpointTransactionLogEntries(
                 session,
                 ImmutableSet.of(ADD),
                 checkpointSchemaManager,
                 typeManager,
-                (MelodyFileSystem) fileSystemFactory.create(session),
+                fileSystemFactory.getOrCreate(session, org, domain),
                 fileFormatDataSourceStats,
                 Optional.of(new MetadataAndProtocolEntry(metadataEntry, protocolEntry)))) {
             return activeAddEntries(checkpointEntries, transactions)
@@ -339,12 +350,16 @@ public class TransactionLogAccess
 
     public Stream<RemoveFileEntry> getRemoveEntries(TableSnapshot tableSnapshot, ConnectorSession session)
     {
+        String schema = tableSnapshot.getTable().getSchemaName();
+        String org = MelodyUtils.getOrgFromSchema(schema);
+        String domain = MelodyUtils.getDomainFromSchema(schema);
+
         return getEntries(
                 tableSnapshot,
                 REMOVE,
                 entryStream -> entryStream.map(DeltaLakeTransactionLogEntry::getRemove).filter(Objects::nonNull),
                 session,
-                (MelodyFileSystem) fileSystemFactory.create(session),
+                fileSystemFactory.getOrCreate(session, org, domain),
                 fileFormatDataSourceStats);
     }
 
@@ -354,12 +369,16 @@ public class TransactionLogAccess
             Set<CheckpointEntryIterator.EntryType> entryTypes,
             Function<Stream<DeltaLakeTransactionLogEntry>, Stream<Object>> entryMapper)
     {
+        String schema = tableSnapshot.getTable().getSchemaName();
+        String org = MelodyUtils.getOrgFromSchema(schema);
+        String domain = MelodyUtils.getDomainFromSchema(schema);
+
         Stream<Object> entries = getEntries(
                 tableSnapshot,
                 entryTypes,
                 (checkpointStream, jsonStream) -> entryMapper.apply(Stream.concat(checkpointStream, jsonStream.stream().map(Transaction::transactionEntries).flatMap(Collection::stream))),
                 session,
-                (MelodyFileSystem) fileSystemFactory.create(session),
+                fileSystemFactory.getOrCreate(session, org, domain),
                 fileFormatDataSourceStats);
 
         return entries.collect(toImmutableMap(Object::getClass, Function.identity(), (first, second) -> second));
@@ -374,23 +393,31 @@ public class TransactionLogAccess
 
     public Stream<ProtocolEntry> getProtocolEntries(TableSnapshot tableSnapshot, ConnectorSession session)
     {
+        String schema = tableSnapshot.getTable().getSchemaName();
+        String org = MelodyUtils.getOrgFromSchema(schema);
+        String domain = MelodyUtils.getDomainFromSchema(schema);
+
         return getEntries(
                 tableSnapshot,
                 PROTOCOL,
                 entryStream -> entryStream.map(DeltaLakeTransactionLogEntry::getProtocol).filter(Objects::nonNull),
                 session,
-                (MelodyFileSystem) fileSystemFactory.create(session),
+                fileSystemFactory.getOrCreate(session, org, domain),
                 fileFormatDataSourceStats);
     }
 
     public Stream<CommitInfoEntry> getCommitInfoEntries(TableSnapshot tableSnapshot, ConnectorSession session)
     {
+        String schema = tableSnapshot.getTable().getSchemaName();
+        String org = MelodyUtils.getOrgFromSchema(schema);
+        String domain = MelodyUtils.getDomainFromSchema(schema);
+
         return getEntries(
                 tableSnapshot,
                 COMMIT,
                 entryStream -> entryStream.map(DeltaLakeTransactionLogEntry::getCommitInfo).filter(Objects::nonNull),
                 session,
-                (MelodyFileSystem) fileSystemFactory.create(session),
+                fileSystemFactory.getOrCreate(session, org, domain),
                 fileFormatDataSourceStats);
     }
 
@@ -448,12 +475,12 @@ public class TransactionLogAccess
                 stats);
     }
 
-    public Stream<DeltaLakeTransactionLogEntry> getJsonEntries(MelodyFileSystem fileSystem, String transactionLogDir, List<Long> forVersions, ConnectorSession session, SchemaTableName table)
+    public Stream<DeltaLakeTransactionLogEntry> getJsonEntries(MelodyFileSystem fileSystem, String transactionLogDir, List<Long> forVersions)
     {
         return forVersions.stream()
                 .flatMap(version -> {
                     try {
-                        Optional<List<DeltaLakeTransactionLogEntry>> entriesFromJson = getEntriesFromJson(version, transactionLogDir, fileSystem, session, table);
+                        Optional<List<DeltaLakeTransactionLogEntry>> entriesFromJson = getEntriesFromJson(version, transactionLogDir, fileSystem);
                         //noinspection SimplifyOptionalCallChains
                         return entriesFromJson.map(List::stream)
                                 // transaction log does not exist. Might have been expired.
@@ -492,17 +519,17 @@ public class TransactionLogAccess
         return result.build();
     }
 
-    private static List<DeltaLakeTransactionLogEntry> getJsonEntries(long startVersion, long endVersion, TableSnapshot tableSnapshot, MelodyFileSystem fileSystem, ConnectorSession session, SchemaTableName table)
+    private static List<DeltaLakeTransactionLogEntry> getJsonEntries(long startVersion, long endVersion, TableSnapshot tableSnapshot, MelodyFileSystem fileSystem)
             throws IOException
     {
         Optional<Long> lastCheckpointVersion = tableSnapshot.getLastCheckpointVersion();
         if (lastCheckpointVersion.isPresent() && startVersion < lastCheckpointVersion.get()) {
             return ImmutableList.<DeltaLakeTransactionLogEntry>builder()
-                    .addAll(TransactionLogTail.loadNewTail(fileSystem, tableSnapshot.getTableLocation(), Optional.of(startVersion), lastCheckpointVersion, session, table).getFileEntries())
+                    .addAll(TransactionLogTail.loadNewTail(fileSystem, tableSnapshot.getTableLocation(), Optional.of(startVersion), lastCheckpointVersion).getFileEntries())
                     .addAll(tableSnapshot.getJsonTransactionLogEntries())
                     .build();
         }
-        return TransactionLogTail.loadNewTail(fileSystem, tableSnapshot.getTableLocation(), Optional.of(startVersion), Optional.of(endVersion), session, table).getFileEntries();
+        return TransactionLogTail.loadNewTail(fileSystem, tableSnapshot.getTableLocation(), Optional.of(startVersion), Optional.of(endVersion)).getFileEntries();
     }
 
     public static String canonicalizeColumnName(String columnName)

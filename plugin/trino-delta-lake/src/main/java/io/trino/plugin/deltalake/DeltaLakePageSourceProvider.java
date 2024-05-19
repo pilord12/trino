@@ -193,9 +193,13 @@ public class DeltaLakePageSourceProvider
         }
 
         Location location = Location.of(split.getPath());
-        MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
-        String schema = table.getSchemaTableName().getSchemaName();
-        TrinoInputFile inputFile = fileSystem.newInputFile(location, split.getFileSize(), MelodyUtils.getOrgFromSchema(schema), MelodyUtils.getDomainFromSchema(schema), ""); // TODO token from session
+
+        String schema = table.getSchemaName();
+        String org = MelodyUtils.getOrgFromSchema(schema);
+        String domain = MelodyUtils.getDomainFromSchema(schema);
+
+        MelodyFileSystem fileSystem = fileSystemFactory.getOrCreate(session, org, domain);
+        TrinoInputFile inputFile = fileSystem.newInputFile(location, split.getFileSize());
         ParquetReaderOptions options = parquetReaderOptions.withMaxReadBlockSize(getParquetMaxReadBlockSize(session))
                 .withMaxReadBlockRowCount(getParquetMaxReadBlockRowCount(session))
                 .withSmallFileThreshold(getParquetSmallFileThreshold(session))

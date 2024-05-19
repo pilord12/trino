@@ -52,8 +52,8 @@ public class TestTransactionLogTail
             throws Exception
     {
         TrinoFileSystem fileSystem = new HdfsFileSystemFactory(HDFS_ENVIRONMENT, HDFS_FILE_SYSTEM_STATS).create(SESSION);
-        TransactionLogTail transactionLogTail = TransactionLogTail.loadNewTail(null, tableLocation, Optional.of(10L), Optional.of(12L), null, null);
-        Optional<TransactionLogTail> updatedLogTail = transactionLogTail.getUpdatedTail(null, tableLocation, Optional.empty(), null, null);
+        TransactionLogTail transactionLogTail = TransactionLogTail.loadNewTail(null, tableLocation, Optional.of(10L), Optional.of(12L));
+        Optional<TransactionLogTail> updatedLogTail = transactionLogTail.getUpdatedTail(null, tableLocation, Optional.empty());
         assertTrue(updatedLogTail.isPresent());
         return updatedLogTail.get().getFileEntries();
     }
@@ -62,7 +62,7 @@ public class TestTransactionLogTail
             throws Exception
     {
         TrinoFileSystem fileSystem = new HdfsFileSystemFactory(HDFS_ENVIRONMENT, HDFS_FILE_SYSTEM_STATS).create(SESSION);
-        TransactionLogTail transactionLogTail = TransactionLogTail.loadNewTail(null, tableLocation, Optional.of(10L), null, null);
+        TransactionLogTail transactionLogTail = TransactionLogTail.loadNewTail(null, tableLocation, Optional.of(10L));
         return transactionLogTail.getFileEntries();
     }
 }

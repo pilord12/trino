@@ -38,6 +38,7 @@ import io.trino.plugin.deltalake.transactionlog.ProtocolEntry;
 import io.trino.plugin.deltalake.transactionlog.RemoveFileEntry;
 import io.trino.plugin.deltalake.transactionlog.TableSnapshot;
 import io.trino.plugin.deltalake.transactionlog.TransactionLogAccess;
+import io.trino.plugin.deltalake.util.MelodyUtils;
 import io.trino.spi.TrinoException;
 import io.trino.spi.classloader.ThreadContextClassLoader;
 import io.trino.spi.connector.ConnectorAccessControl;
@@ -188,9 +189,12 @@ public class VacuumProcedure
             throw new TrinoException(NOT_SUPPORTED, "Cannot execute vacuum procedure with %s writer features".formatted(unsupportedWriterFeatures));
         }
 
+        String org = MelodyUtils.getOrgFromSchema(schema);
+        String domain = MelodyUtils.getDomainFromSchema(schema);
+
         String tableLocation = tableSnapshot.getTableLocation();
         String transactionLogDir = getTransactionLogDir(tableLocation);
-        MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
+        MelodyFileSystem fileSystem = fileSystemFactory.getOrCreate(session, org, domain);
         String commonPathPrefix = tableLocation.endsWith("/") ? tableLocation : tableLocation + "/";
         String queryId = session.getQueryId();
 
@@ -207,9 +211,7 @@ public class VacuumProcedure
                                         // active files, but still needed to read a "recent" snapshot
                                         recentVersions.stream().sorted(naturalOrder())
                                                 .skip(1)
-                                                .collect(toImmutableList()),
-                                        session,
-                                        tableName)
+                                                .collect(toImmutableList()))
                                 .map(DeltaLakeTransactionLogEntry::getRemove)
                                 .filter(Objects::nonNull)
                                 .map(RemoveFileEntry::getPath))

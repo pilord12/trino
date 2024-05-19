@@ -22,6 +22,9 @@ import io.trino.filesystem.TrinoInputFile;
 import io.trino.parquet.ParquetReaderOptions;
 import io.trino.plugin.deltalake.DeltaLakeColumnHandle;
 import io.trino.plugin.deltalake.DeltaLakePageSource;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystem;
+import io.trino.plugin.deltalake.filesystem.MelodyFileSystemFactory;
+import io.trino.plugin.deltalake.util.MelodyUtils;
 import io.trino.plugin.hive.FileFormatDataSourceStats;
 import io.trino.plugin.hive.ReaderPageSource;
 import io.trino.plugin.hive.parquet.ParquetPageSourceFactory;
@@ -73,7 +76,7 @@ public class TableChangesFunctionProcessor
 
     public TableChangesFunctionProcessor(
             ConnectorSession session,
-            TrinoFileSystemFactory fileSystemFactory,
+            MelodyFileSystemFactory fileSystemFactory,
             DateTimeZone parquetDateTimeZone,
             int domainCompactionThreshold,
             FileFormatDataSourceStats fileFormatDataSourceStats,
@@ -160,7 +163,7 @@ public class TableChangesFunctionProcessor
 
     private static DeltaLakePageSource createDeltaLakePageSource(
             ConnectorSession session,
-            TrinoFileSystemFactory fileSystemFactory,
+            MelodyFileSystemFactory fileSystemFactory,
             DateTimeZone parquetDateTimeZone,
             int domainCompactionThreshold,
             FileFormatDataSourceStats fileFormatDataSourceStats,
@@ -168,7 +171,11 @@ public class TableChangesFunctionProcessor
             TableChangesTableFunctionHandle handle,
             TableChangesSplit split)
     {
-        TrinoFileSystem fileSystem = fileSystemFactory.create(session);
+        String schema = handle.schemaTableName().getSchemaName();
+        String org = MelodyUtils.getOrgFromSchema(schema);
+        String domain = MelodyUtils.getDomainFromSchema(schema);
+
+        MelodyFileSystem fileSystem = fileSystemFactory.getOrCreate(session, org, domain);
         TrinoInputFile inputFile = fileSystem.newInputFile(Location.of(split.path()), split.fileSize());
         Map<String, Optional<String>> partitionKeys = split.partitionKeys();
 

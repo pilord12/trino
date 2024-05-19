@@ -84,8 +84,7 @@ public class TestDeltaLakeFileBasedTableStatisticsProvider
                 new DeltaLakeConfig(),
                 fileFormatDataSourceStats,
                 null,
-                new ParquetReaderConfig(),
-                null);
+                new ParquetReaderConfig());
 
         statistics = new CachingExtendedStatisticsAccess(new MetaDirStatisticsAccess(null, new JsonCodecFactory().jsonCodec(ExtendedStatistics.class)));
         tableStatisticsProvider = new FileBasedTableStatisticsProvider(

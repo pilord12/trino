@@ -25,10 +25,7 @@ import io.trino.plugin.base.util.JsonUtils;
 import io.trino.plugin.deltalake.DeltaLakeColumnHandle;
 import io.trino.plugin.deltalake.filesystem.MelodyFileSystem;
 import io.trino.plugin.deltalake.transactionlog.checkpoint.LastCheckpoint;
-import io.trino.plugin.deltalake.util.MelodyUtils;
 import io.trino.spi.TrinoException;
-import io.trino.spi.connector.ConnectorSession;
-import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.type.DecimalType;
 import io.trino.spi.type.Decimals;
 import io.trino.spi.type.Type;
@@ -50,7 +47,6 @@ import java.time.format.ResolverStyle;
 import java.time.format.SignStyle;
 import java.time.temporal.ChronoField;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
 
@@ -235,7 +231,7 @@ public final class TransactionLogParser
                 format("Unable to parse value [%s] from column %s with type %s", valueString, column.getBaseColumnName(), column.getBaseType()));
     }
 
-    static Optional<LastCheckpoint> readLastCheckpoint(MelodyFileSystem fileSystem, ConnectorSession session, SchemaTableName table, String tableLocation, Map<String, TrinoFileSystemFactory> factories)
+    static Optional<LastCheckpoint> readLastCheckpoint(MelodyFileSystem fileSystem, String tableLocation)
     {
         return Failsafe.with(RetryPolicy.builder()
                         .withMaxRetries(5)
@@ -246,16 +242,14 @@ public final class TransactionLogParser
                             log.debug(event.getLastException(), "Failure when accessing last checkpoint information, will be retried");
                         })
                         .build())
-                .get(() -> tryReadLastCheckpoint(fileSystem, session, table, tableLocation, factories));
+                .get(() -> tryReadLastCheckpoint(fileSystem, tableLocation));
     }
 
-    private static Optional<LastCheckpoint> tryReadLastCheckpoint(MelodyFileSystem fileSystem, ConnectorSession session, SchemaTableName table, String tableLocation, Map<String, TrinoFileSystemFactory> factories)
+    private static Optional<LastCheckpoint> tryReadLastCheckpoint(MelodyFileSystem fileSystem, String tableLocation)
             throws JsonParseException, JsonMappingException
     {
         Location checkpointPath = Location.of(getTransactionLogDir(tableLocation)).appendPath(LAST_CHECKPOINT_FILENAME);
-        String org = table.getSchemaName().split("/")[0];
-        String domain = table.getSchemaName().split("/")[1];
-        TrinoInputFile inputFile = fileSystem.newInputFile(checkpointPath, org, domain, ""); // TODO token from session
+        TrinoInputFile inputFile = fileSystem.newInputFile(checkpointPath);
         try (InputStream lastCheckpointInput = inputFile.newStream()) {
             // Note: there apparently is 8K buffering applied and _last_checkpoint should be much smaller.
             return Optional.of(JsonUtils.parseJson(OBJECT_MAPPER, lastCheckpointInput, LastCheckpoint.class));
@@ -272,18 +266,15 @@ public final class TransactionLogParser
         }
     }
 
-    public static long getMandatoryCurrentVersion(MelodyFileSystem fileSystem, ConnectorSession session, SchemaTableName table, String tableLocation, Map<String, TrinoFileSystemFactory> factories)
+    public static long getMandatoryCurrentVersion(MelodyFileSystem fileSystem, String tableLocation)
             throws IOException
     {
-        long version = readLastCheckpoint(fileSystem, session, table, tableLocation, factories).map(LastCheckpoint::getVersion).orElse(0L);
+        long version = readLastCheckpoint(fileSystem, tableLocation).map(LastCheckpoint::getVersion).orElse(0L);
 
         String transactionLogDir = getTransactionLogDir(tableLocation);
         while (true) {
             Location entryPath = getTransactionLogJsonEntryPath(transactionLogDir, version + 1);
-            String schema = table.getSchemaName();
-            String org = MelodyUtils.getOrgFromSchema(schema);
-            String domain = MelodyUtils.getDomainFromSchema(schema);
-            if (!fileSystem.newInputFile(entryPath, org, domain, "").exists()) { // TODO token from session
+            if (!fileSystem.newInputFile(entryPath).exists()) {
                 return version;
             }
             version++;

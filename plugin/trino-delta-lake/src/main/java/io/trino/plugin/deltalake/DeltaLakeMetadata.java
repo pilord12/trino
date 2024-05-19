@@ -67,6 +67,7 @@ import io.trino.plugin.deltalake.transactionlog.statistics.DeltaLakeJsonFileStat
 import io.trino.plugin.deltalake.transactionlog.writer.TransactionConflictException;
 import io.trino.plugin.deltalake.transactionlog.writer.TransactionLogWriter;
 import io.trino.plugin.deltalake.transactionlog.writer.TransactionLogWriterFactory;
+import io.trino.plugin.deltalake.util.MelodyUtils;
 import io.trino.plugin.hive.HiveType;
 import io.trino.plugin.hive.SchemaAlreadyExistsException;
 import io.trino.plugin.hive.TableAlreadyExistsException;
@@ -138,6 +139,7 @@ import io.trino.spi.type.Type;
 import io.trino.spi.type.TypeManager;
 import io.trino.spi.type.VarcharType;
 import jakarta.annotation.Nullable;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.CloseableHttpClient;
@@ -397,8 +399,7 @@ public class DeltaLakeMetadata
     private final Map<QueriedTable, TableSnapshot> queriedSnapshots = new ConcurrentHashMap<>();
     private final CloseableHttpClient client = HttpClientBuilder.create().build();
     private final JwtTokenManager tm;
-    private final Map<String, TrinoFileSystemFactory> factories;
-
+    private final DeltaLakeConfig config;
 
     private record QueriedTable(SchemaTableName schemaTableName, long version)
     {
@@ -427,8 +428,7 @@ public class DeltaLakeMetadata
             CachingExtendedStatisticsAccess statisticsAccess,
             boolean useUniqueTableLocation,
             boolean allowManagedTableRename,
-            DeltaLakeConfig config,
-            Map<String, TrinoFileSystemFactory> factories)
+            DeltaLakeConfig config)
     {
         this.metastore = requireNonNull(metastore, "metastore is null");
         this.transactionLogAccess = requireNonNull(transactionLogAccess, "transactionLogAccess is null");
@@ -449,8 +449,8 @@ public class DeltaLakeMetadata
         this.deleteSchemaLocationsFallback = deleteSchemaLocationsFallback;
         this.useUniqueTableLocation = useUniqueTableLocation;
         this.allowManagedTableRename = allowManagedTableRename;
-        this.factories = factories;
         this.tm = new JwtTokenManager(config.getClientId(), config.getClientSecret(), config.getOAuthUrl(), client);
+        this.config = config;
     }
 
     public TableSnapshot getSnapshot(ConnectorSession session, SchemaTableName table, String tableLocation, long atVersion)
@@ -493,7 +493,8 @@ public class DeltaLakeMetadata
             throw new RuntimeException(e);
         }
 
-        var request = new HttpGet("https://dev.dataplatform.hpedev.net/dev/data-catalog/organizations/" + org + "/domains/" + domain + "/assets");
+        String url = StringUtils.stripEnd(config.getMelodyBaseUrl(), "/") + "/data-catalog/organizations/" + org + "/domains/" + domain + "/assets";
+        var request = new HttpGet(url);
 
         request.addHeader("Content-Type", "application/json");
         request.addHeader("Authorization", "Bearer " + jwt);
@@ -528,7 +529,8 @@ public class DeltaLakeMetadata
             throw new RuntimeException(e);
         }
 
-        var request = new HttpGet("https://dev.dataplatform.hpedev.net/dev/data-catalog/global/domains/");
+        String url = StringUtils.stripEnd(config.getMelodyBaseUrl(), "/") + "/data-catalog/global/domains";
+        var request = new HttpGet(url);
 
         request.addHeader("Content-Type", "application/json");
         request.addHeader("Authorization", "Bearer " + jwt);
@@ -607,7 +609,8 @@ public class DeltaLakeMetadata
         String org = orgDomain[0];
         String domain = orgDomain[1];
 
-        var request = new HttpGet("https://dev.dataplatform.hpedev.net/dev/data-catalog/organizations/" + org + "/domains/" + domain + "/assets/" + tableName.getTableName());
+        String url = StringUtils.stripEnd(config.getMelodyBaseUrl(), "/") + "/data-catalog/organizations/" + org + "/domains/" + domain + "/assets/" + tableName.getTableName();
+        var request = new HttpGet(url);
         request.addHeader("Content-Type", "application/json");
         request.addHeader("Authorization", "Bearer " + jwt);
 
@@ -624,7 +627,7 @@ public class DeltaLakeMetadata
                 JSONObject json = new JSONObject(EntityUtils.toString(response.getEntity()));
                 String bucket = json.getJSONObject("attributes").getJSONObject("location").getJSONObject("S3").getString("bucket");
                 String prefix = json.getJSONObject("attributes").getJSONObject("location").getJSONObject("S3").getString("path");
-                loc = "s3a://" + bucket + "/" + prefix;
+                loc = "s3://" + bucket + "/" + prefix;
 
                 SchemaTableName stm = new SchemaTableName(tableName.getSchemaName(), tableName.getTableName());
                 DeltaMetastoreTable t = new DeltaMetastoreTable(stm, false, loc);
@@ -1010,10 +1013,10 @@ public class DeltaLakeMetadata
         return appendPath(schemaLocation, tableNameLocationComponent);
     }
 
-    private void checkPathContainsNoFiles(ConnectorSession session, Location targetPath)
+    private void checkPathContainsNoFiles(ConnectorSession session, Location targetPath, String org, String domain)
     {
         try {
-            TrinoFileSystem fileSystem = fileSystemFactory.create(session);
+            MelodyFileSystem fileSystem = fileSystemFactory.getOrCreate(session, org, domain);
             if (fileSystem.listFiles(targetPath).hasNext()) {
                 throw new TrinoException(NOT_SUPPORTED, "Target location cannot contain any files: " + targetPath);
             }
@@ -1346,15 +1349,19 @@ public class DeltaLakeMetadata
     private DeltaLakeInsertTableHandle createInsertHandle(ConnectorSession session, RetryMode retryMode, DeltaLakeTableHandle table, List<DeltaLakeColumnHandle> inputColumns)
     {
         String tableLocation = table.getLocation();
+        String schema = table.getSchemaName();
+        String org = MelodyUtils.getOrgFromSchema(schema);
+        String domain = MelodyUtils.getDomainFromSchema(schema);
+
         try {
-            MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
+            MelodyFileSystem fileSystem = fileSystemFactory.getOrCreate(session, org, domain);
             return new DeltaLakeInsertTableHandle(
                     table.getSchemaTableName(),
                     tableLocation,
                     table.getMetadataEntry(),
                     table.getProtocolEntry(),
                     inputColumns,
-                    getMandatoryCurrentVersion(fileSystem, session, table.getSchemaTableName(), tableLocation, factories),
+                    getMandatoryCurrentVersion(fileSystem, tableLocation),
                     retryMode != NO_RETRIES);
         }
         catch (IOException e) {
@@ -1392,8 +1399,12 @@ public class DeltaLakeMetadata
                 .collect(toImmutableList());
 
         if (handle.isRetriesEnabled()) {
-            cleanExtraOutputFiles(session, Location.of(handle.getLocation()), dataFileInfos);
+            cleanExtraOutputFiles(session, Location.of(handle.getLocation()), dataFileInfos, handle.getTableName());
         }
+
+        String schema = handle.getTableName().getSchemaName();
+        String org = MelodyUtils.getOrgFromSchema(schema);
+        String domain = MelodyUtils.getDomainFromSchema(schema);
 
         boolean writeCommitted = false;
         try {
@@ -1401,8 +1412,8 @@ public class DeltaLakeMetadata
 
             long createdTime = Instant.now().toEpochMilli();
 
-            MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
-            long commitVersion = getMandatoryCurrentVersion(fileSystem, session, handle.getTableName(), handle.getLocation(), factories) + 1;
+            MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.getOrCreate(session, org, domain);
+            long commitVersion = getMandatoryCurrentVersion(fileSystem, handle.getLocation()) + 1;
             if (commitVersion != handle.getReadVersion() + 1) {
                 throw new TransactionConflictException(format("Conflicting concurrent writes found. Expected transaction log version: %s, actual version: %s",
                         handle.getReadVersion(),
@@ -1445,7 +1456,7 @@ public class DeltaLakeMetadata
         catch (Exception e) {
             if (!writeCommitted) {
                 // TODO perhaps it should happen in a background thread (https://github.com/trinodb/trino/issues/12011)
-                cleanupFailedWrite(session, handle.getLocation(), dataFileInfos);
+                cleanupFailedWrite(session, handle.getLocation(), dataFileInfos, handle.getTableName());
             }
             throw new TrinoException(DELTA_LAKE_BAD_WRITE, "Failed to write Delta Lake transaction log entry", e);
         }
@@ -1543,7 +1554,7 @@ public class DeltaLakeMetadata
         List<DataFileInfo> cdcFiles = ImmutableList.copyOf(split.get(false));
 
         if (mergeHandle.getInsertTableHandle().isRetriesEnabled()) {
-            cleanExtraOutputFiles(session, Location.of(handle.getLocation()), allFiles);
+            cleanExtraOutputFiles(session, Location.of(handle.getLocation()), allFiles, handle.getSchemaTableName());
         }
 
         Optional<Long> checkpointInterval = handle.getMetadataEntry().getCheckpointInterval();
@@ -1553,10 +1564,14 @@ public class DeltaLakeMetadata
         try {
             TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, tableLocation, handle.getSchemaTableName());
 
+            String schema = handle.getSchemaName();
+            String org = MelodyUtils.getOrgFromSchema(schema);
+            String domain = MelodyUtils.getDomainFromSchema(schema);
+
             long createdTime = Instant.now().toEpochMilli();
 
-            MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
-            long currentVersion = getMandatoryCurrentVersion(fileSystem, session, mergeHandle.getTableHandle().getSchemaTableName(), tableLocation, factories);
+            MelodyFileSystem fileSystem = fileSystemFactory.getOrCreate(session, org, domain);
+            long currentVersion = getMandatoryCurrentVersion(fileSystem, tableLocation);
             if (currentVersion != handle.getReadVersion()) {
                 throw new TransactionConflictException(format("Conflicting concurrent writes found. Expected transaction log version: %s, actual version: %s", handle.getReadVersion(), currentVersion));
             }
@@ -1591,7 +1606,7 @@ public class DeltaLakeMetadata
         catch (IOException | RuntimeException e) {
             if (!writeCommitted) {
                 // TODO perhaps it should happen in a background thread (https://github.com/trinodb/trino/issues/12011)
-                cleanupFailedWrite(session, tableLocation, allFiles);
+                cleanupFailedWrite(session, tableLocation, allFiles, handle.getSchemaTableName());
             }
             throw new TrinoException(DELTA_LAKE_BAD_WRITE, "Failed to write Delta Lake transaction log entry", e);
         }
@@ -1752,12 +1767,12 @@ public class DeltaLakeMetadata
                 .collect(toImmutableList());
 
         if (optimizeHandle.isRetriesEnabled()) {
-            cleanExtraOutputFiles(session, Location.of(executeHandle.getTableLocation()), dataFileInfos);
+            cleanExtraOutputFiles(session, Location.of(executeHandle.getTableLocation()), dataFileInfos, executeHandle.getSchemaTableName());
         }
 
         boolean writeCommitted = false;
         try {
-            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, tableLocation, executeHandle.getSchemaTableName()); // TODO keaton check
+            TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, tableLocation, executeHandle.getSchemaTableName());
 
             long createdTime = Instant.now().toEpochMilli();
             long commitVersion = readVersion + 1;
@@ -1793,7 +1808,7 @@ public class DeltaLakeMetadata
         catch (Exception e) {
             if (!writeCommitted) {
                 // TODO perhaps it should happen in a background thread (https://github.com/trinodb/trino/issues/12011)
-                cleanupFailedWrite(session, tableLocation, dataFileInfos);
+                cleanupFailedWrite(session, tableLocation, dataFileInfos, executeHandle.getSchemaTableName());
             }
             throw new TrinoException(DELTA_LAKE_BAD_WRITE, "Failed to write Delta Lake transaction log entry", e);
         }
@@ -1926,8 +1941,12 @@ public class DeltaLakeMetadata
                 LOG.info("Snapshot for table %s already at version %s when checkpoint requested for version %s", table, snapshot.getVersion(), newVersion);
             }
 
-            MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
-            TableSnapshot updatedSnapshot = snapshot.getUpdatedSnapshot(fileSystem, Optional.of(newVersion), session, table).orElseThrow();
+            String schema = table.getSchemaName();
+            String org = MelodyUtils.getOrgFromSchema(schema);
+            String domain = MelodyUtils.getDomainFromSchema(schema);
+
+            MelodyFileSystem fileSystem = fileSystemFactory.getOrCreate(session, org, domain);
+            TableSnapshot updatedSnapshot = snapshot.getUpdatedSnapshot(fileSystem, Optional.of(newVersion), table).orElseThrow();
             checkpointWriterManager.writeCheckpoint(session, updatedSnapshot);
         }
         catch (Exception e) {
@@ -1937,15 +1956,20 @@ public class DeltaLakeMetadata
         }
     }
 
-    private void cleanupFailedWrite(ConnectorSession session, String tableLocation, List<DataFileInfo> dataFiles)
+    private void cleanupFailedWrite(ConnectorSession session, String tableLocation, List<DataFileInfo> dataFiles, SchemaTableName table)
     {
         Location location = Location.of(tableLocation);
         List<Location> filesToDelete = dataFiles.stream()
                 .map(DataFileInfo::getPath)
                 .map(location::appendPath)
                 .collect(toImmutableList());
+
+        String schema = table.getSchemaName();
+        String org = MelodyUtils.getOrgFromSchema(schema);
+        String domain = MelodyUtils.getDomainFromSchema(schema);
+
         try {
-            TrinoFileSystem fileSystem = fileSystemFactory.create(session);
+            MelodyFileSystem fileSystem = fileSystemFactory.getOrCreate(session, org, domain);
             fileSystem.deleteFiles(filesToDelete);
         }
         catch (Exception e) {
@@ -2845,32 +2869,37 @@ public class DeltaLakeMetadata
         return originalColumnName;
     }
 
-    private void cleanExtraOutputFiles(ConnectorSession session, Location baseLocation, List<DataFileInfo> validDataFiles)
+    private void cleanExtraOutputFiles(ConnectorSession session, Location baseLocation, List<DataFileInfo> validDataFiles, SchemaTableName table)
     {
         Set<Location> writtenFilePaths = validDataFiles.stream()
                 .map(dataFileInfo -> baseLocation.appendPath(dataFileInfo.getPath()))
                 .collect(toImmutableSet());
 
-        cleanExtraOutputFiles(session, writtenFilePaths);
+        cleanExtraOutputFiles(session, writtenFilePaths, table);
     }
 
-    private void cleanExtraOutputFiles(ConnectorSession session, Set<Location> validWrittenFilePaths)
+    private void cleanExtraOutputFiles(ConnectorSession session, Set<Location> validWrittenFilePaths, SchemaTableName table)
     {
         Set<Location> fileLocations = validWrittenFilePaths.stream()
                 .map(Location::parentDirectory)
                 .collect(toImmutableSet());
 
         for (Location location : fileLocations) {
-            cleanExtraOutputFiles(session, session.getQueryId(), location, validWrittenFilePaths);
+            cleanExtraOutputFiles(session, session.getQueryId(), location, validWrittenFilePaths, table);
         }
     }
 
-    private void cleanExtraOutputFiles(ConnectorSession session, String queryId, Location location, Set<Location> filesToKeep)
+    private void cleanExtraOutputFiles(ConnectorSession session, String queryId, Location location, Set<Location> filesToKeep, SchemaTableName table)
     {
         Deque<Location> filesToDelete = new ArrayDeque<>();
+
+        String schema = table.getSchemaName();
+        String org = MelodyUtils.getOrgFromSchema(schema);
+        String domain = MelodyUtils.getDomainFromSchema(schema);
+
         try {
             LOG.debug("Deleting failed attempt files from %s for query %s", location, queryId);
-            TrinoFileSystem fileSystem = fileSystemFactory.create(session);
+            MelodyFileSystem fileSystem = fileSystemFactory.getOrCreate(session, org, domain);
 
             // files within given partition are written flat into location; we need to list recursively
             FileIterator iterator = fileSystem.listFiles(location);
@@ -2993,9 +3022,13 @@ public class DeltaLakeMetadata
         try {
             TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriter(session, tableLocation, tableHandle.getSchemaTableName());
 
+            String schema = tableHandle.getSchemaTableName().getSchemaName();
+            String org = MelodyUtils.getOrgFromSchema(schema);
+            String domain = MelodyUtils.getDomainFromSchema(schema);
+
             long writeTimestamp = Instant.now().toEpochMilli();
-            MelodyFileSystem fileSystem = (MelodyFileSystem) fileSystemFactory.create(session);
-            long currentVersion = getMandatoryCurrentVersion(fileSystem, session, tableHandle.getSchemaTableName(), tableLocation, factories);
+            MelodyFileSystem fileSystem = fileSystemFactory.getOrCreate(session, org, domain);
+            long currentVersion = getMandatoryCurrentVersion(fileSystem, tableLocation);
             if (currentVersion != tableHandle.getReadVersion()) {
                 throw new TransactionConflictException(format("Conflicting concurrent writes found. Expected transaction log version: %s, actual version: %s", tableHandle.getReadVersion(), currentVersion));
             }
